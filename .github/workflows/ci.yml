@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Placeholder until the Tauri scaffold lands (see CHANGELOG). Kept so branch
+  # protection has a required check from day one.
+  meta:
+    name: docs · licences
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fsfe/reuse-action@v5
+      - name: NOTICE must exist and mention the mpv licence question
+        run: |
+          test -f NOTICE
+          grep -qi 'mpv' NOTICE
+          grep -qiE 'LGPL|GPL' NOTICE
+
+  edu-isolation:
+    name: Edu build contains no excluded feature (madde 22)
+    runs-on: ubuntu-latest
+    # Enable once the scaffold builds. Left visible rather than added later:
+    # the institutional guarantee in madde 32b rests on this job existing.
+    if: false
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Edu profile
+        run: cargo build --release --no-default-features --features edu
+      - name: Assert excluded symbols are absent
+        run: |
+          bin=target/release/eon-stream
+          fail=0
+          for sym in marketplace_client addon_url_input open_dht public_tracker telemetry; do
+            if strings "$bin" | grep -qi "$sym"; then
+              echo "::error::forbidden symbol present in Edu build: $sym"
+              fail=1
+            fi
+          done
+          exit $fail

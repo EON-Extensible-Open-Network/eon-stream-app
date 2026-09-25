@@ -1,0 +1,46 @@
+# Rust / Tauri
+/src-tauri/target/
+**/*.rs.bk
+*.pdb
+
+# Frontend
+node_modules/
+/dist/
+/build/
+/.vite/
+*.tsbuildinfo
+
+# Tauri generated
+/src-tauri/gen/
+/src-tauri/WixTools/
+/src-tauri/.tauri/
+
+# Signing keys and secrets -- NEVER commit (madde 34)
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+/keys/
+tauri.conf.private.json
+.env
+.env.*
+!.env.example
+
+# Bundled third-party binaries (fetched at build time)
+/src-tauri/binaries/
+/src-tauri/resources/mpv/
+
+# Editors / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local scratch
+/scratch/
+/tmp/
+*.local.*
