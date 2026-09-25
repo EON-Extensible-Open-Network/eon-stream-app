@@ -1,4 +1,5 @@
 # Rust / Tauri
+/target/
 /src-tauri/target/
 **/*.rs.bk
 *.pdb
