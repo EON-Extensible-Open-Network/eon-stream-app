@@ -1,0 +1,58 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and publish"
+        required: true
+
+permissions:
+  contents: write
+
+# Releases are built by CI, never on a developer machine. That is what madde 22
+# asks for -- a pinned toolchain, a recorded build, and a published SHA256 that
+# anyone can check -- and it is also the only honest way to say where a binary
+# someone downloaded came from.
+
+jobs:
+  windows:
+    name: build · windows-x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the pinned toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Stage the artefact
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          mkdir -p dist
+          cp target/release/eon-stream.exe "dist/eon-stream-${tag}-windows-x86_64.exe"
+          cd dist
+          sha256sum *.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/*
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          draft: false
+          prerelease: true
+          generate_release_notes: false
+          body_path: .github/release-notes-alpha.md

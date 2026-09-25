@@ -10,10 +10,35 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Deliberately no RUSTFLAGS: -D warnings -- Cargo.toml denies the lints that
+  # matter (clippy::all, unwrap_used, panic) while pedantic only advises. A build
+  # should not break over a missing pair of backticks.
 
 jobs:
-  # Placeholder until the Tauri scaffold lands (see CHANGELOG). Kept so branch
-  # protection has a required check from day one.
+  build:
+    name: fmt · clippy · build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked
+      - run: cargo build --release --locked
+      - name: The binary must start and print its banner
+        shell: bash
+        run: |
+          bin=target/release/eon-stream
+          [[ "$RUNNER_OS" == "Windows" ]] && bin=target/release/eon-stream.exe
+          # Feeding it `quit` exercises startup, the prompt, and a clean exit.
+          printf 'quit\n' | "$bin" | tee /tmp/out.txt
+          grep -q 'EON Stream' /tmp/out.txt
+          grep -q 'cannot play it yet' /tmp/out.txt
+
   meta:
     name: docs · licences
     runs-on: ubuntu-latest
@@ -25,27 +50,37 @@ jobs:
           test -f NOTICE
           grep -qi 'mpv' NOTICE
           grep -qiE 'LGPL|GPL' NOTICE
+      - name: No telemetry in source (madde 36)
+        run: |
+          if grep -rIn -iE 'telemetry|analytics|sentry\.io|mixpanel' cli/src 2>/dev/null; then
+            echo "::error::telemetry-shaped code found (madde 36)"
+            exit 1
+          fi
 
   edu-isolation:
     name: Edu build contains no excluded feature (madde 22)
     runs-on: ubuntu-latest
-    # Enable once the scaffold builds. Left visible rather than added later:
-    # the institutional guarantee in madde 32b rests on this job existing.
+    # Enabled with the commit that adds the Edu build profile. Left visible
+    # rather than added later: the guarantee in madde 32c rests on this job.
     if: false
     steps:
       - uses: actions/checkout@v4
-      - run: rustup show
-      - uses: Swatinem/rust-cache@v2
-      - name: Build Edu profile
-        run: cargo build --release --no-default-features --features edu
-      - name: Assert excluded symbols are absent
+      - run: echo "pending the Edu profile"
+
+  dco:
+    name: signed-off commits
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Every commit must carry Signed-off-by
         run: |
-          bin=target/release/eon-stream
-          fail=0
-          for sym in marketplace_client addon_url_input open_dht public_tracker telemetry; do
-            if strings "$bin" | grep -qi "$sym"; then
-              echo "::error::forbidden symbol present in Edu build: $sym"
-              fail=1
+          missing=0
+          while read -r sha; do
+            if ! git log -1 --format=%B "$sha" | grep -qiE '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "::error::missing Signed-off-by: $(git log -1 --oneline "$sha")"
+              missing=1
             fi
-          done
-          exit $fail
+          done < <(git rev-list "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}")
+          exit $missing

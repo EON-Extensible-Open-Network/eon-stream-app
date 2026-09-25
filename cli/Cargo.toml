@@ -1,0 +1,24 @@
+[package]
+name = "eon-stream-cli"
+version = "0.0.0-alpha"
+description = "EON Stream alpha: run a Stremio-compatible addon and look at what it returns."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "eon-stream"
+path = "src/main.rs"
+
+[dependencies]
+# Pinned to an exact commit, not a branch: an alpha binary someone downloads
+# should be buildable from the same inputs tomorrow.
+eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "25e951773aae47f66fd42a6a43586791d021c414" }
+ureq = "2"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+panic = "deny"

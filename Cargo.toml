@@ -1,0 +1,19 @@
+# Workspace. The alpha is a terminal binary in `cli/`; the Tauri application
+# will be added as a second member (`src-tauri/`) once the mpv integration
+# proves its shape (madde 2). Nothing here needs renaming when that happens.
+[workspace]
+members = ["cli"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.98"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/EON-Extensible-Open-Network/eon-stream-app"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
