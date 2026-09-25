@@ -11,8 +11,10 @@
 //! Stremio-compatible addon and see, with their own eyes, that the protocol
 //! layer works.
 //!
-//! It cannot play anything. Playback needs mpv, which is the next slice
-//! (madde 2). Sources are found and listed; nothing is opened.
+//! Playback works for anything mpv can open directly — an HTTP(S) stream or a
+//! local file — driven over JSON IPC (madde 2). BitTorrent sources are listed
+//! but not yet playable: sequential download and the local HTTP server are the
+//! next slice.
 //!
 //! Numbered selection rather than identifiers, because typing
 //! `tt0903747:1:1` by hand is not a user interface at any level of shallowness.
@@ -29,10 +31,11 @@ use std::{
 
 use eon_stream_core::{
     http::{HttpClient, HttpError, HttpResponse, Limits},
-    AddonClient, AddonRegistry, MetaPreview, StreamSource,
+    AddonClient, AddonRegistry, MetaPreview, Stream, StreamSource,
 };
+use eon_stream_engine::{MpvPlayer, PlaybackSource, PlayerOptions, SeekMode};
 
-const VERSION: &str = "0.0.0-alpha";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// A real HTTP client. Kept here rather than in the library, so the library
 /// pulls in no network stack.
@@ -111,20 +114,23 @@ struct Selection {
     catalogs: Vec<(String, String, String, String)>,
     /// Items from the last catalogue page.
     items: Vec<MetaPreview>,
+    /// Sources from the last `open`, flattened and numbered.
+    streams: Vec<Stream>,
 }
 
 fn main() {
     println!("EON Stream {VERSION}  ·  protocol alpha");
     println!("An open ecosystem for everyone.  https://github.com/EON-Extensible-Open-Network");
     println!();
-    println!("This alpha can find content. It cannot play it yet -- playback needs mpv,");
-    println!("which is the next piece of work. Sources are listed, not opened.");
+    println!("Plays HTTP streams and local files through mpv. BitTorrent sources are");
+    println!("listed but not playable yet -- the streaming engine is the next piece of work.");
     println!();
 
     let http = Http::new();
     let client = AddonClient::new(&http);
     let mut registry = load();
     let mut selection = Selection::default();
+    let mut player: Option<MpvPlayer> = None;
 
     if registry.is_empty() {
         println!("No addons installed. EON Stream ships with none, ever.");
@@ -168,7 +174,16 @@ fn main() {
             "remove" | "rm" => remove(&mut registry, &rest),
             "catalogs" | "cat" => catalogs(&registry, &mut selection),
             "browse" | "b" => browse(&client, &registry, &mut selection, &rest),
-            "open" | "o" => open(&client, &registry, &selection, &rest),
+            "open" | "o" => open(&client, &registry, &mut selection, &rest),
+            "play" | "p" => play(&mut player, &selection, &rest),
+            "pause" | "resume" | "seek" | "where" => control(&mut player, command, &rest),
+            "stop" => match player.take() {
+                Some(active) => {
+                    let _ = active.quit();
+                    println!("stopped");
+                }
+                None => println!("nothing is playing"),
+            },
             other => {
                 println!("unknown command: {other}   (try `help`)");
             }
@@ -183,6 +198,11 @@ fn help() {
     println!("  catalogs         numbered list of every catalogue on offer");
     println!("  browse <n> [q]   open catalogue n, optionally searching for q");
     println!("  open <n>         details and sources for item n of the last listing");
+    println!("  play <n>         open source n in mpv  (or: play <url or file path>)");
+    println!("  pause / resume   hold and release playback");
+    println!("  seek <n>         jump n seconds, negative to go back");
+    println!("  where            current position");
+    println!("  stop             close the player");
     println!("  quit");
 }
 
@@ -355,7 +375,7 @@ fn browse(
 fn open(
     client: &AddonClient<&Http>,
     registry: &AddonRegistry,
-    selection: &Selection,
+    selection: &mut Selection,
     rest: &[&str],
 ) {
     let Some(index) = rest.first().and_then(|n| n.parse::<usize>().ok()) else {
@@ -392,6 +412,9 @@ fn open(
         println!("No addon installed here provides sources for this item.");
         println!("Cinemeta is catalogue and metadata only -- it serves no streams.");
     }
+
+    // Flattened and numbered, so `play 2` means something.
+    selection.streams.clear();
     for (addon_id, streams) in &found.items {
         let name = registry
             .get(addon_id)
@@ -405,7 +428,12 @@ fn open(
                 Some(StreamSource::External(_)) => "external",
                 None => "unplayable",
             };
-            println!("  [{kind:>10}] {}", stream.display_label());
+            selection.streams.push(stream.clone());
+            println!(
+                "{:>3}. [{kind:>10}] {}",
+                selection.streams.len(),
+                stream.display_label()
+            );
         }
     }
     for failure in &found.failures {
@@ -413,9 +441,118 @@ fn open(
     }
     if found.total() > 0 {
         println!(
-            "\n{} source(s). Playback is not implemented in this alpha.",
+            "\n{} source(s). `play <n>` to open one in mpv.",
             found.total()
         );
+    }
+}
+
+/// Hand a source to mpv, or explain why it cannot be handed over yet.
+fn play(player: &mut Option<MpvPlayer>, selection: &Selection, rest: &[&str]) {
+    let Some(first) = rest.first() else {
+        println!("usage: play <number from the last `open`>   |   play <url or file path>");
+        return;
+    };
+
+    // A number selects from the last listing; anything else is taken literally,
+    // which is how a local file or a direct URL gets tested without an addon.
+    let source = if let Ok(index) = first.parse::<usize>() {
+        let Some(stream) = index.checked_sub(1).and_then(|i| selection.streams.get(i)) else {
+            println!("no source number {index} in the last listing");
+            return;
+        };
+        match stream.source() {
+            Some(StreamSource::Direct(url)) => PlaybackSource::Url(url.to_owned()),
+            Some(StreamSource::Torrent { .. }) => {
+                println!("This is a BitTorrent source. The streaming engine is the next piece");
+                println!("of work, so it cannot be played yet -- sequential download and the");
+                println!("local HTTP server come before mpv can be pointed at it.");
+                return;
+            }
+            Some(StreamSource::YouTube(id)) => {
+                println!("This is a YouTube id ({id}). mpv can play those with yt-dlp");
+                println!("installed; wiring that up is not part of this alpha.");
+                return;
+            }
+            Some(StreamSource::External(url)) => {
+                println!("This source is a link to open in a browser, not a stream:");
+                println!("  {url}");
+                return;
+            }
+            None => {
+                println!("That source object has nothing playable in it.");
+                return;
+            }
+        }
+    } else {
+        let joined = rest.join(" ");
+        let path = std::path::Path::new(&joined);
+        if path.is_file() {
+            PlaybackSource::File(path.to_path_buf())
+        } else {
+            PlaybackSource::Url(joined)
+        }
+    };
+
+    // Replace any player already running, rather than leaving it orphaned.
+    if let Some(existing) = player.take() {
+        let _ = existing.quit();
+    }
+
+    println!("starting mpv on {}...", source.display_hint());
+    let options = PlayerOptions {
+        title: Some(format!("EON Stream — {}", source.display_hint())),
+        ..PlayerOptions::default()
+    };
+    match MpvPlayer::launch(&source, &options) {
+        Ok(mut started) => {
+            match started.duration() {
+                Ok(Some(seconds)) => println!("  duration {seconds:.0}s"),
+                _ => println!("  (mpv is loading; duration not known yet)"),
+            }
+            println!("  mpv has its own window. `pause`, `resume`, `seek <n>`, `stop`.");
+            *player = Some(started);
+        }
+        Err(e) => println!("could not start playback: {e}"),
+    }
+}
+
+/// Commands that only make sense while something is playing.
+fn control(player: &mut Option<MpvPlayer>, command: &str, rest: &[&str]) {
+    let Some(active) = player.as_mut() else {
+        println!("nothing is playing. `play <n>` first.");
+        return;
+    };
+    if !active.is_running() {
+        println!("mpv has exited.");
+        *player = None;
+        return;
+    }
+
+    let outcome = match command {
+        "pause" => active.set_paused(true),
+        "resume" => active.set_paused(false),
+        "seek" => match rest.first().and_then(|s| s.parse::<f64>().ok()) {
+            Some(seconds) => active.seek(seconds, SeekMode::Relative),
+            None => {
+                println!("usage: seek <seconds, negative to go back>");
+                return;
+            }
+        },
+        "where" => {
+            match active.position() {
+                Ok(Some(position)) => println!("  at {position:.1}s"),
+                Ok(None) => println!("  position not known yet"),
+                Err(e) => println!("  {e}"),
+            }
+            return;
+        }
+        _ => return,
+    };
+
+    match outcome {
+        Ok(()) => println!("  ok"),
+        Err(e) => println!("  {e}"),
     }
 }
 
