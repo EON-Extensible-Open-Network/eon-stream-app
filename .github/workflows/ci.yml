@@ -29,15 +29,22 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked
       - run: cargo build --release --locked
-      - name: The binary must start and print its banner
+      - name: The binary must start, prompt, and exit cleanly
         shell: bash
         run: |
           bin=target/release/eon-stream
           [[ "$RUNNER_OS" == "Windows" ]] && bin=target/release/eon-stream.exe
-          # Feeding it `quit` exercises startup, the prompt, and a clean exit.
-          printf 'quit\n' | "$bin" | tee /tmp/out.txt
+          # `quit` exercises startup, the prompt loop, and a clean exit.
+          # `help` proves the dispatch table is wired, including playback.
+          printf 'help\nquit\n' | "$bin" | tee /tmp/out.txt
+          # Asserted: the product name, the prompt, and that the commands exist.
+          # Deliberately not the banner prose -- an earlier version of this step
+          # checked a sentence, and broke the moment the sentence was correct to
+          # change. Assert the contract, not the copy.
           grep -q 'EON Stream' /tmp/out.txt
-          grep -q 'cannot play it yet' /tmp/out.txt
+          grep -q 'eon>' /tmp/out.txt
+          grep -q 'add <url>' /tmp/out.txt
+          grep -q 'play <n>' /tmp/out.txt
 
   meta:
     name: docs · licences
