@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "eon-stream-cli"
-version = "0.1.0-alpha"
+version = "0.11.0-alpha"
 dependencies = [
  "eon-stream-core",
  "eon-stream-engine",
@@ -62,7 +62,7 @@ dependencies = [
 [[package]]
 name = "eon-stream-core"
 version = "0.0.0"
-source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-core?rev=25e951773aae47f66fd42a6a43586791d021c414#25e951773aae47f66fd42a6a43586791d021c414"
+source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-core?rev=ea4ab32548c8bd92c62c65aae3615c5167a34879#ea4ab32548c8bd92c62c65aae3615c5167a34879"
 dependencies = [
  "serde",
  "serde_json",
@@ -72,7 +72,7 @@ dependencies = [
 [[package]]
 name = "eon-stream-engine"
 version = "0.0.0"
-source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-engine?rev=04baafb#04baafb3f7d7b20f430abe91c3c37a7f1be860ab"
+source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-engine?rev=90f07dc6bf4b7183a532543e64e5d8171c407028#90f07dc6bf4b7183a532543e64e5d8171c407028"
 
 [[package]]
 name = "find-msvc-tools"
