@@ -72,7 +72,7 @@ dependencies = [
 [[package]]
 name = "eon-stream-engine"
 version = "0.0.0"
-source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-engine?rev=90f07dc6bf4b7183a532543e64e5d8171c407028#90f07dc6bf4b7183a532543e64e5d8171c407028"
+source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-engine?rev=6cf1558#6cf15589b06d33776b353162ac5b4d7850c5be2a"
 
 [[package]]
 name = "find-msvc-tools"

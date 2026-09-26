@@ -16,7 +16,7 @@ path = "src/main.rs"
 # Pinned to an exact commit, not a branch: an alpha binary someone downloads
 # should be buildable from the same inputs tomorrow.
 eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "ea4ab32548c8bd92c62c65aae3615c5167a34879" }
-eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "90f07dc6bf4b7183a532543e64e5d8171c407028" }
+eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "6cf1558" }
 ureq = "2"
 
 [lints.clippy]
