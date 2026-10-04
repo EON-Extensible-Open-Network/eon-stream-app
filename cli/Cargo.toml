@@ -1,6 +1,6 @@
 [package]
 name = "eon-stream-cli"
-version = "0.11.0-alpha"
+version = "0.12.0-alpha"
 description = "EON Stream alpha: run a Stremio-compatible addon and look at what it returns."
 edition.workspace = true
 rust-version.workspace = true
@@ -15,9 +15,15 @@ path = "src/main.rs"
 [dependencies]
 # Pinned to an exact commit, not a branch: an alpha binary someone downloads
 # should be buildable from the same inputs tomorrow.
-eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "ea4ab32548c8bd92c62c65aae3615c5167a34879" }
-eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "6cf1558" }
+eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "229f22645a895134c739805460df7c35f9e3568d" }
+eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "d542c2aa60144659d00db707c082602512d007f8" }
 ureq = "2"
+
+[dev-dependencies]
+# Tests build addon stream objects from the JSON an addon actually sends,
+# rather than from hand-constructed structs that cannot drift from the wire
+# format.
+serde_json = "1"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

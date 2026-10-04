@@ -26,14 +26,37 @@ Edu binary and **fails the release** if a forbidden symbol appears. This matters
 guarantee given to an institution rests on it (madde 32b): "absent at compile time" has to be
 verifiable by someone who does not trust us.
 
-## Status
+## Status: a working program with no interface, on purpose
 
-**Faz 0.** No usable build yet, and **no Tauri scaffold is committed** — deliberately. A
-half-generated scaffold is worse than none: it rots, and it hides which decisions are
-actually made. The scaffold lands in the first real commit, once the mpv IPC prototype
-(madde 2) proves the shape of the player integration.
+**There is no window yet, and that is the plan rather than a shortfall.** The whole alpha
+line is a terminal program: every piece is proven at a prompt first, so that when there is
+an interface it sits on work that already works. The interface is the *last* thing added, at
+`v1`. A half-generated Tauri scaffold committed now would rot and would hide which
+decisions are actually made (madde 2).
 
-What exists now: the licence, the notice, the architecture notes, and CI.
+What the current build does, today, from a prompt:
+
+| | |
+|---|---|
+| **Addons** | add by URL, list, remove, order, enable, refresh, configure, discover, health |
+| **Browsing** | catalogues, search, pagination, metadata, episodes, `eon://` deep links |
+| **Playback** | mpv over JSON IPC — HTTP, HLS, DASH, local files, and **BitTorrent** |
+| **Torrents** | sequential download, loopback HTTP server, prebuffer, file selection, progress |
+| **Subtitles** | from addons, matched by name, hash and size, loaded into the running player |
+| **History** | resume where you left off, continue-watching, next episode, same release |
+| **Modules** | install, update, remove, enable, order, dependencies, **signature verification** |
+| **Themes** | declarative, no code, with a WCAG contrast report |
+| **Settings** | persisted, typed, and auditably free of anything that reports anywhere |
+| **Updates** | signed release manifests, downgrades refused, revocation applied |
+| **Language** | Turkish and English, `lang tr` |
+
+Against the eight items of the v1 definition-of-done: 2, 3, 4, 5, 6 and 7 are done; 8 is
+done apart from the interface it describes; 1 is done apart from packaging and signing.
+
+**One thing refuses to work, by design.** `install` installs nothing, because this build
+trusts no signing keys — no key in the hierarchy exists yet (madde 30). The mechanism is
+complete and exercised; see the note in [`CHANGELOG.md`](CHANGELOG.md#known-limitation-by-design)
+for how to mint one and watch the chain run.
 
 ## Architecture
 
@@ -58,6 +81,8 @@ Windows and Linux, single-file installer, signed, auto-updating. Stremio-compati
 resolution, mpv playback, subtitles, resume. Add addons by URL. Sequential torrent
 streaming. Module manager with signature verification. Declarative themes. Compatibility
 suite green. Turkish and English, meeting a baseline accessibility bar (madde 35).
+
+What is left between here and `v1`: the interface, the installer, and the signing keys.
 
 **Not in v1:** marketplace, accounts, creator tools, material packages, music, mobile,
 code-executing plugins, Edu.

@@ -45,6 +45,31 @@ jobs:
           grep -q 'eon>' /tmp/out.txt
           grep -q 'add <url>' /tmp/out.txt
           grep -q 'play <n>' /tmp/out.txt
+          grep -q 'install <manifest>' /tmp/out.txt
+          grep -q 'torrent' /tmp/out.txt
+
+      - name: Nothing reports anywhere, checked by running it (madde 36)
+        shell: bash
+        run: |
+          bin=target/release/eon-stream
+          [[ "$RUNNER_OS" == "Windows" ]] && bin=target/release/eon-stream.exe
+          # The source grep in the `meta` job is a tripwire. This is the
+          # actual check: `audit` walks the serialised settings document and
+          # reports any key that would send something somewhere. A behaviour
+          # assertion survives a rename; a grep for a word does not.
+          printf 'audit\nquit\n' | "$bin" | tee /tmp/audit.txt
+          grep -qi 'sends anything anywhere' /tmp/audit.txt
+
+      - name: A fresh run trusts no signing key, so it installs nothing
+        shell: bash
+        run: |
+          bin=target/release/eon-stream
+          [[ "$RUNNER_OS" == "Windows" ]] && bin=target/release/eon-stream.exe
+          # The shipped state (madde 30, 34). If this build ever starts
+          # trusting something by default, that is a decision somebody has to
+          # have made on purpose, and this is where it gets noticed.
+          printf 'trust\nquit\n' | "$bin" | tee /tmp/trust.txt
+          grep -qi 'trusts no signing keys' /tmp/trust.txt
 
   meta:
     name: docs · licences
@@ -57,9 +82,14 @@ jobs:
           test -f NOTICE
           grep -qi 'mpv' NOTICE
           grep -qiE 'LGPL|GPL' NOTICE
-      - name: No telemetry in source (madde 36)
+      - name: No telemetry-shaped code or endpoints in source (madde 36)
         run: |
-          if grep -rIn -iE 'telemetry|analytics|sentry\.io|mixpanel' cli/src 2>/dev/null; then
+          # A tripwire, not a proof -- the proof is the `audit` run in the build
+          # job and the find_forbidden_keys test in eon-stream-core. Comment
+          # lines are excluded, because writing down *why* there is no telemetry
+          # must not trip the check that there is none: an earlier version of
+          # this step caught its own documentation.
+          if grep -rIn -iE 'telemetry|analytics|sentry\.io|mixpanel|posthog|amplitude\.com' cli/src 2>/dev/null | grep -vE ':[[:space:]]*(//|/\*|\*)'; then
             echo "::error::telemetry-shaped code found (madde 36)"
             exit 1
           fi

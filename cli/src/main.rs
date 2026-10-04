@@ -20,6 +20,11 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
+mod modules;
+mod prefs;
+mod text;
+mod torrents;
+
 use std::{
     fs,
     io::{self, Read, Write},
@@ -30,13 +35,19 @@ use std::{
 use eon_stream_core::{
     history::{clock, now_unix},
     http::{HttpClient, HttpError, HttpResponse, Limits},
+    modules::ModuleStore,
     rank,
-    ranking::{format_size, RankedStream, RankingPreferences, Resolution},
+    ranking::{format_size, RankedStream, Resolution},
+    revocation::RevocationStore,
+    settings::Settings,
+    signature::TrustStore,
     types::AddonCatalogEntry,
-    AddonClient, AddonRegistry, HealthTracker, Meta, MetaPreview, Stream, StreamSource, Subtitle,
-    Video, WatchEntry, WatchHistory,
+    AddonClient, AddonRegistry, BuildProfile, HealthTracker, Meta, MetaPreview, Stream,
+    StreamSource, Subtitle, Video, WatchEntry, WatchHistory,
 };
-use eon_stream_engine::{MpvPlayer, PlaybackSource, PlayerOptions, SeekMode};
+use eon_stream_engine::{MpvPlayer, PlaybackSource, PlayerOptions, SeekMode, TorrentEngine};
+
+use crate::text::{say, Text};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -105,7 +116,7 @@ impl HttpClient for Http {
 
 /// Files live beside the executable, so the binary stays self-contained and
 /// leaves nothing behind elsewhere. No account, no sync, nothing sent anywhere.
-fn beside_exe(name: &str) -> PathBuf {
+pub(crate) fn beside_exe(name: &str) -> PathBuf {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join(name)))
@@ -159,14 +170,33 @@ struct App {
     registry: AddonRegistry,
     history: WatchHistory,
     health: HealthTracker,
-    prefs: RankingPreferences,
+    settings: Settings,
+    text: Text,
+    /// Installed modules. The build profile is `Stream`; an Edu build is a
+    /// separate binary with a separate trust set (madde 22).
+    modules: ModuleStore,
+    /// What this machine trusts. Empty until keys exist (madde 30, 34).
+    trust: TrustStore,
+    revocations: RevocationStore,
     selection: Selection,
     player: Option<MpvPlayer>,
     playing: Option<NowPlaying>,
+    /// Started the first time a torrent is played, not at launch: a DHT and a
+    /// listening socket are not something to open on behalf of someone who
+    /// only plays HTTP streams.
+    torrent: Option<TorrentEngine>,
 }
 
 impl App {
     fn new() -> Self {
+        let text = Text::new("en");
+        let settings = prefs::load(&beside_exe("eon-settings.json"), &text);
+        // The interface language is a setting, so the catalogues are reloaded
+        // once it is known. Loading them twice costs a JSON parse of a file
+        // compiled into the binary.
+        let text = Text::new(&settings.language);
+        let modules =
+            modules::load_store(&beside_exe("eon-modules.json"), BuildProfile::Stream, &text);
         Self {
             client: AddonClient::new(Http::new()),
             registry: fs::read_to_string(beside_exe("eon-addons.json"))
@@ -178,11 +208,63 @@ impl App {
                 .and_then(|json| WatchHistory::from_json(&json).ok())
                 .unwrap_or_default(),
             health: HealthTracker::new(),
-            prefs: RankingPreferences::default(),
+            trust: modules::load_trust(&beside_exe("eon-trust.json")),
+            revocations: fs::read_to_string(beside_exe("eon-revocations.json"))
+                .ok()
+                .and_then(|json| RevocationStore::from_json(&json).ok())
+                .unwrap_or_default(),
+            modules,
+            settings,
+            text,
             selection: Selection::default(),
             player: None,
             playing: None,
+            torrent: None,
         }
+    }
+
+    fn save_settings(&self) {
+        prefs::save(&self.settings, &beside_exe("eon-settings.json"), &self.text);
+    }
+
+    fn save_modules(&self) {
+        if let Ok(json) = self.modules.to_json() {
+            if let Err(e) = fs::write(beside_exe("eon-modules.json"), json) {
+                eprintln!("could not save the module list: {e}");
+            }
+        }
+    }
+
+    fn save_revocations(&self) {
+        if let Ok(json) = self.revocations.to_json() {
+            if let Err(e) = fs::write(beside_exe("eon-revocations.json"), json) {
+                eprintln!("could not save the revocation list: {e}");
+            }
+        }
+    }
+
+    /// The torrent engine, started if it is not already.
+    ///
+    /// Returns `None` after reporting why, so a caller can simply give up on
+    /// this source without inventing an error message of its own.
+    fn torrent_engine(&mut self) -> Option<&TorrentEngine> {
+        if self.torrent.is_none() {
+            let options = match torrents::options_from(&self.settings.torrent) {
+                Ok(options) => options,
+                Err(e) => {
+                    println!("{e}");
+                    return None;
+                }
+            };
+            match TorrentEngine::start(options) {
+                Ok(engine) => self.torrent = Some(engine),
+                Err(e) => {
+                    println!("{e}");
+                    return None;
+                }
+            }
+        }
+        self.torrent.as_ref()
     }
 
     fn save_addons(&self) {
@@ -235,11 +317,11 @@ impl App {
 fn main() {
     let mut app = App::new();
 
-    println!("EON Stream {VERSION}  ·  alpha");
+    println!("EON Stream {VERSION}  ·  alpha  ·  no interface yet, by design");
     println!("An open ecosystem for everyone.  https://github.com/EON-Extensible-Open-Network");
     println!();
-    println!("Plays HTTP, HLS, DASH and local files through mpv. BitTorrent sources are");
-    println!("listed but not playable yet -- the streaming engine is the next piece of work.");
+    println!("Plays HTTP, HLS, DASH, local files and BitTorrent through mpv.");
+    println!("Torrents stream: sequential download into a loopback server the player reads.");
     println!();
 
     // A deep link on the command line is handled before the prompt appears.
@@ -306,11 +388,16 @@ fn main() {
     if let Some(player) = app.player.take() {
         let _ = player.quit();
     }
+    // The engine goes down last: it owns a runtime with disk writes in flight,
+    // and it is what decides whether the downloaded pieces are kept.
+    if let Some(engine) = app.torrent.take() {
+        torrents::shutdown(engine, &app.text);
+    }
 }
 
 fn dispatch(app: &mut App, command: &str, rest: &[&str]) {
     match command {
-        "help" | "?" => help(),
+        "help" | "?" => help(&app.text),
 
         // addons
         "add" => add(app, rest),
@@ -342,17 +429,226 @@ fn dispatch(app: &mut App, command: &str, rest: &[&str]) {
         "sub" => load_subtitle(app, rest),
         "speed" | "adelay" | "sdelay" | "volume" => tune(app, command, rest),
 
+        // torrents
+        "torrent" | "torrents" => torrents::status(app.torrent.as_ref(), &app.text),
+        "files" => torrent_files(app),
+
+        // modules and themes
+        "modules" | "mods" => modules::list(&app.modules, &app.text),
+        "install" => install_module(app, rest),
+        "uninstall" | "enable-module" | "disable-module" | "order-module" => {
+            module_operation(app, command, rest);
+        }
+        "theme" => theme_command(app, rest),
+        "trust" => modules::trust(&app.trust, now_unix_signed(), &app.text),
+
+        // settings and updates
+        "settings" => prefs::show(&app.settings, &app.text),
+        "set" => set_setting(app, rest),
+        "audit" => prefs::audit_settings(&app.settings, &app.text),
+        "lang" => set_language(app, rest),
+        "update" => update_command(app, rest),
+        "revocations" => revocations_command(app, rest),
+
         // history and preferences
         "continue" => continue_watching(app),
         "forget" => forget(app, rest),
         "prefer" => prefer(app, rest),
 
-        other => println!("unknown command: {other}   (`help`)"),
+        other => say!(app.text, "cli.error.unknowncommand", other),
     }
 }
 
-fn help() {
-    println!("addons");
+/// Unix seconds as the signed value the signature and revocation layers use.
+///
+/// They take `i64` because a key's `notBefore` can legitimately precede the
+/// epoch on an imported key, and the history layer uses `u64` because a watch
+/// position cannot.
+fn now_unix_signed() -> i64 {
+    i64::try_from(now_unix()).unwrap_or(i64::MAX)
+}
+
+// ---------------------------------------------------------------- modules
+
+fn install_module(app: &mut App, rest: &[&str]) {
+    let Some(path) = rest.first() else {
+        say!(app.text, "cli.error.needsargument");
+        return;
+    };
+    let now = now_unix_signed();
+    let installed = modules::install(
+        &mut app.modules,
+        &app.trust,
+        &app.revocations,
+        now,
+        path,
+        &app.text,
+        // Installing is the one thing in this program that asks before acting,
+        // because it is the one thing that grants something (madde 3).
+        |_prepared, text| confirm(text),
+    );
+    if installed {
+        app.save_modules();
+    }
+}
+
+fn module_operation(app: &mut App, command: &str, rest: &[&str]) {
+    let operation = match command {
+        "uninstall" => "remove",
+        "enable-module" => "enable",
+        "disable-module" => "disable",
+        _ => "order",
+    };
+    if modules::operate(&mut app.modules, operation, rest, &app.text) {
+        app.save_modules();
+    }
+}
+
+fn theme_command(app: &mut App, rest: &[&str]) {
+    match rest.first().copied() {
+        // `theme none` goes back to the built-in palette.
+        Some("none") => {
+            app.settings.theme = None;
+            app.save_settings();
+            modules::theme(&app.modules, None, &rest[1..], &app.text);
+        }
+        Some("tokens") | None => {
+            let selected = app.settings.theme.clone();
+            modules::theme(&app.modules, selected.as_deref(), rest, &app.text);
+        }
+        Some(id) => {
+            // Resolve it before storing it, so a name that does not work is
+            // not written into the settings.
+            let candidate = id.to_owned();
+            modules::theme(&app.modules, Some(&candidate), &rest[1..], &app.text);
+            if app.modules.get(&candidate).is_some() {
+                app.settings.theme = Some(candidate);
+                app.save_settings();
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- settings
+
+fn set_setting(app: &mut App, rest: &[&str]) {
+    if prefs::set(&mut app.settings, rest, &app.text) {
+        app.save_settings();
+        // The language takes effect at once rather than at the next launch.
+        if rest.first().copied() == Some("language") {
+            app.text = Text::new(&app.settings.language);
+        }
+    }
+}
+
+fn set_language(app: &mut App, rest: &[&str]) {
+    let Some(locale) = rest.first() else {
+        println!("  {}", app.text.locale());
+        return;
+    };
+    // Changed quietly, catalogues reloaded, then reported -- so the
+    // confirmation arrives in the language that was just chosen rather than
+    // the one being left behind.
+    if prefs::set_quietly(&mut app.settings, &["language", locale], &app.text) {
+        app.text = Text::new(&app.settings.language);
+        app.save_settings();
+        say!(app.text, "cli.settings.set", "language", locale);
+    }
+}
+
+// ---------------------------------------------------------------- updates
+
+fn update_command(app: &mut App, rest: &[&str]) {
+    let now = now_unix_signed();
+    // `update verify <file>` checks a download against the signed manifest
+    // rather than looking for a newer one.
+    if rest.first().copied() == Some("verify") {
+        let Some(path) = rest.get(1) else {
+            say!(app.text, "cli.error.needsargument");
+            return;
+        };
+        prefs::verify_download(app.client.http(), &app.trust, path, now, &app.text);
+        return;
+    }
+    prefs::check_update(
+        app.client.http(),
+        &app.trust,
+        VERSION,
+        &app.settings,
+        now,
+        &app.text,
+    );
+    if app.settings.updates.refresh_revocations {
+        refresh_revocations(app);
+    }
+}
+
+fn revocations_command(app: &mut App, rest: &[&str]) {
+    match rest.first().copied() {
+        Some("refresh") => refresh_revocations(app),
+        _ => {
+            prefs::revocation_status(&app.revocations, now_unix_signed(), &app.text);
+            let now = now_unix_signed();
+            prefs::apply_revocations(&app.revocations, &mut app.modules, now, &app.text);
+        }
+    }
+}
+
+fn refresh_revocations(app: &mut App) {
+    let now = now_unix_signed();
+    let refreshed = prefs::refresh_revocations(
+        app.client.http(),
+        &mut app.revocations,
+        &mut app.modules,
+        &app.trust,
+        now,
+        &app.text,
+    );
+    if refreshed {
+        app.save_revocations();
+        app.save_modules();
+    }
+    prefs::revocation_status(&app.revocations, now, &app.text);
+}
+
+// ---------------------------------------------------------------- torrents
+
+fn torrent_files(app: &mut App) {
+    let Some(engine) = app.torrent.as_ref() else {
+        say!(app.text, "cli.torrent.nosession");
+        return;
+    };
+    let torrents = engine.list();
+    if torrents.is_empty() {
+        say!(app.text, "cli.torrent.nosession");
+        return;
+    }
+    for handle in torrents {
+        println!(
+            "
+{}",
+            handle.name().unwrap_or(handle.info_hash())
+        );
+        torrents::list_files(&handle, &app.text);
+    }
+}
+
+/// Ask before granting something.
+fn confirm(text: &Text) -> bool {
+    print!("{} ", text.get("cli.common.confirm"));
+    let _ = io::stdout().flush();
+    let mut line = String::new();
+    if io::stdin().read_line(&mut line).is_err() {
+        return false;
+    }
+    let answer = line.trim().to_ascii_lowercase();
+    answer == "yes" || answer == text.get("cli.common.yes").to_ascii_lowercase()
+}
+
+fn help(text: &Text) {
+    say!(text, "cli.help.header");
+    println!();
+    say!(text, "cli.help.addons");
     println!("  add <url>            install an addon");
     println!("  list                 installed addons and their health");
     println!("  remove <n>           uninstall");
@@ -363,7 +659,7 @@ fn help() {
     println!("  discover [<n>]       addons advertised by an installed addon");
     println!("  health               which addons are failing");
     println!();
-    println!("browsing");
+    say!(text, "cli.help.browsing");
     println!("  catalogs             numbered list of catalogues");
     println!("  browse <n> [query]   open a catalogue, optionally searching");
     println!("  more                 next page of the last catalogue");
@@ -371,7 +667,7 @@ fn help() {
     println!("  episodes [season]    episodes of the last opened series");
     println!("  ep <n>               sources for episode n");
     println!();
-    println!("playback");
+    say!(text, "cli.help.playback");
     println!("  play <n>             play source n   (or: play <url or file>)");
     println!("  next                 next episode, keeping the same release");
     println!("  pause / resume / stop");
@@ -383,7 +679,31 @@ fn help() {
     println!("  sub <n>              load subtitle n into the player");
     println!("  speed <x>  volume <n>  adelay <s>  sdelay <s>");
     println!();
-    println!("history and preferences");
+    say!(text, "cli.help.torrents");
+    println!("  play <n>             a torrent source streams like any other");
+    println!("  play <n> file <i>    pick a file inside the torrent by index");
+    println!("  torrent              progress, rates, peers, where it is served");
+    println!("  files                every file in the running torrents");
+    println!();
+    say!(text, "cli.help.modules");
+    println!("  modules              installed modules and their load order");
+    println!("  install <manifest>   install from a module manifest file");
+    println!("  uninstall <n>        remove a module");
+    println!("  enable-module <n>  disable-module <n>  order-module <n> <pos>");
+    println!("  theme [<id>|none]    apply a theme and check its contrast");
+    println!("  theme tokens         the resolved token values");
+    println!("  trust                which signing keys this build trusts");
+    println!();
+    say!(text, "cli.help.updates");
+    println!("  settings             every setting and its value");
+    println!("  set <path> <value>   change one   (set torrent.keepFiles on)");
+    println!("  lang en|tr           interface language");
+    println!("  audit                prove nothing here reports anywhere");
+    println!("  update               look for a newer release");
+    println!("  update verify <file> check a download against the signed manifest");
+    println!("  revocations [refresh] revoked modules and keys");
+    println!();
+    say!(text, "cli.help.preferences");
     println!("  continue             unfinished items");
     println!("  forget <n>           drop one from history");
     println!("  prefer               show ranking preferences");
@@ -392,6 +712,8 @@ fn help() {
     println!("  prefer country tur   skip geo-restricted sources");
     println!("  prefer size on|off   favour larger files");
     println!("  quit");
+    println!();
+    say!(text, "cli.help.hint");
 }
 
 // ---------------------------------------------------------------- addons
@@ -860,7 +1182,7 @@ fn list_sources(app: &mut App, content_type: &str, id: &str, name: &str) {
             .record_failure(&failure.addon_id, now_unix(), &failure.error.to_string());
     }
 
-    app.selection.ranked = rank(&found.items, &app.prefs);
+    app.selection.ranked = rank(&found.items, &app.settings.ranking);
 
     println!();
     if app.selection.ranked.is_empty() && found.failures.is_empty() {
@@ -999,9 +1321,55 @@ fn play(app: &mut App, rest: &[&str]) {
             .and_then(|i| app.selection.ranked.get(i))
             .cloned()
         else {
-            println!("no source number {index} in the last listing");
+            // Two different situations, and conflating them sends someone
+            // looking for a source number that was never going to be there.
+            if app.selection.ranked.is_empty() {
+                say!(app.text, "cli.error.nolist");
+            } else {
+                say!(app.text, "cli.error.outofrange", first);
+            }
             return;
         };
+
+        // A torrent is intercepted here, before classification, because
+        // resolving one means starting the engine and waiting on the swarm.
+        // `play <n> file <i>` overrides which file inside it gets played.
+        if let Some(torrent) = torrents::source_of(&ranked.stream) {
+            let explicit = rest
+                .iter()
+                .position(|argument| *argument == "file")
+                .and_then(|at| rest.get(at + 1))
+                .and_then(|value| value.parse::<usize>().ok());
+            // Started first, then borrowed: `torrent_engine` needs `&mut app`
+            // to start one, and resolving needs `&app.text` alongside it.
+            if app.torrent_engine().is_none() {
+                return;
+            }
+            let resolved = {
+                let Some(engine) = app.torrent.as_ref() else {
+                    return;
+                };
+                torrents::resolve(engine, &torrent, explicit, &app.text)
+            };
+            match resolved {
+                Ok((source, _handle, _index)) => {
+                    // Subtitles that came with the stream still apply; the
+                    // headers do not, since the player is reading from
+                    // loopback rather than from the addon's host.
+                    let subtitles: Vec<String> = ranked
+                        .stream
+                        .subtitles
+                        .iter()
+                        .map(|s| s.url.clone())
+                        .collect();
+                    let playing = now_playing(app, &ranked);
+                    launch(app, source, Vec::new(), subtitles, playing);
+                }
+                Err(message) => println!("{message}"),
+            }
+            return;
+        }
+
         match to_playback_source(&ranked.stream) {
             Ok(source) => {
                 let headers: Vec<(String, String)> = ranked
@@ -1025,6 +1393,42 @@ fn play(app: &mut App, rest: &[&str]) {
         }
     } else {
         let joined = rest.join(" ");
+
+        // A magnet link or a bare info hash goes through the engine, which is
+        // also the only way to reach it without an addon -- useful for trying
+        // a torrent someone sent you, and the path the engine was tested on.
+        if let Some(request) = torrents::request_from_argument(first) {
+            let explicit = rest
+                .iter()
+                .position(|argument| *argument == "file")
+                .and_then(|at| rest.get(at + 1))
+                .and_then(|value| value.parse::<usize>().ok());
+            if app.torrent_engine().is_none() {
+                return;
+            }
+            let resolved = {
+                let Some(engine) = app.torrent.as_ref() else {
+                    return;
+                };
+                torrents::resolve(
+                    engine,
+                    &torrents::TorrentSource {
+                        request,
+                        file_index: None,
+                    },
+                    explicit,
+                    &app.text,
+                )
+            };
+            match resolved {
+                Ok((source, _handle, _index)) => {
+                    launch(app, source, Vec::new(), Vec::new(), None);
+                }
+                Err(message) => println!("{message}"),
+            }
+            return;
+        }
+
         let path = std::path::Path::new(&joined);
         let source = if path.is_file() {
             PlaybackSource::File(path.to_path_buf())
@@ -1034,7 +1438,22 @@ fn play(app: &mut App, rest: &[&str]) {
         (source, Vec::new(), Vec::new(), None)
     };
     let (source, headers, subtitles, playing) = prepared;
+    launch(app, source, headers, subtitles, playing);
+}
 
+/// Start the player on a source that is already resolved.
+///
+/// Split out of `play` so the torrent path, which resolves its source over
+/// several seconds and through a different route, ends up in exactly the same
+/// launch: one place that remembers the old position, applies the resume point
+/// and reports what mpv said.
+fn launch(
+    app: &mut App,
+    source: PlaybackSource,
+    headers: Vec<(String, String)>,
+    subtitles: Vec<String>,
+    playing: Option<NowPlaying>,
+) {
     // Replace whatever was running, keeping its position first.
     app.remember_position();
     if let Some(existing) = app.player.take() {
@@ -1107,6 +1526,11 @@ fn now_playing(app: &App, ranked: &RankedStream) -> Option<NowPlaying> {
     })
 }
 
+/// Sentinel for the one source kind `to_playback_source` cannot resolve on its
+/// own. `play` intercepts torrents before this is ever returned; it exists so
+/// that path cannot silently become reachable without someone noticing.
+const TORRENT_HANDLED_ELSEWHERE: &str = "torrent source: resolved by the engine";
+
 fn to_playback_source(stream: &Stream) -> Result<PlaybackSource, String> {
     match stream.source() {
         Some(StreamSource::Direct(url)) => Ok(PlaybackSource::Url(url.to_owned())),
@@ -1116,14 +1540,10 @@ fn to_playback_source(stream: &Stream) -> Result<PlaybackSource, String> {
                 "https://www.youtube.com/watch?v={id}"
             )))
         }
-        Some(StreamSource::Torrent { info_hash, .. }) => {
-            let short = &info_hash[..info_hash.len().min(12)];
-            Err(format!(
-                "This is a BitTorrent source ({short}...). The streaming engine is the\n\
-                 next piece of work: sequential download and a local HTTP server have to\n\
-                 exist before mpv can be pointed at it."
-            ))
-        }
+        // A torrent is resolved by the caller rather than here: it needs the
+        // engine, and it blocks for as long as the swarm takes. This function
+        // is a pure classification, and stays that way.
+        Some(StreamSource::Torrent { .. }) => Err(TORRENT_HANDLED_ELSEWHERE.to_owned()),
         Some(StreamSource::External(url)) => Err(format!(
             "This source is a link to open in a browser, not a stream:\n  {url}"
         )),
@@ -1489,29 +1909,30 @@ fn prefer(app: &mut App, rest: &[&str]) {
         println!("ranking preferences:");
         println!(
             "  audio languages  {}",
-            if app.prefs.preferred_audio_languages.is_empty() {
+            if app.settings.ranking.preferred_audio_languages.is_empty() {
                 "none".to_owned()
             } else {
-                app.prefs.preferred_audio_languages.join(", ")
+                app.settings.ranking.preferred_audio_languages.join(", ")
             }
         );
         println!(
             "  minimum res      {}",
-            app.prefs
+            app.settings
+                .ranking
                 .minimum_resolution
                 .map_or_else(|| "none".to_owned(), |r| format!("{r:?}"))
         );
         println!(
             "  country          {}",
-            app.prefs.country.as_deref().unwrap_or("not set")
+            app.settings.ranking.country.as_deref().unwrap_or("not set")
         );
-        println!("  favour larger    {}", app.prefs.prefer_larger);
+        println!("  favour larger    {}", app.settings.ranking.prefer_larger);
         println!("\nSession-only for now; they re-rank the next listing.");
         return;
     };
     match *what {
         "lang" => {
-            app.prefs.preferred_audio_languages = rest[1..]
+            app.settings.ranking.preferred_audio_languages = rest[1..]
                 .join(",")
                 .split(',')
                 .map(|s| s.trim().to_ascii_lowercase())
@@ -1519,11 +1940,11 @@ fn prefer(app: &mut App, rest: &[&str]) {
                 .collect();
             println!(
                 "  audio languages: {}",
-                app.prefs.preferred_audio_languages.join(", ")
+                app.settings.ranking.preferred_audio_languages.join(", ")
             );
         }
         "min" => {
-            app.prefs.minimum_resolution = match rest.get(1).copied() {
+            app.settings.ranking.minimum_resolution = match rest.get(1).copied() {
                 Some("2160" | "4k") => Some(Resolution::UltraHd),
                 Some("1440") => Some(Resolution::QuadHd),
                 Some("1080") => Some(Resolution::FullHd),
@@ -1537,18 +1958,26 @@ fn prefer(app: &mut App, rest: &[&str]) {
             println!("  minimum resolution set");
         }
         "country" => {
-            app.prefs.country = rest.get(1).map(|c| c.to_ascii_lowercase());
+            app.settings.ranking.country = rest.get(1).map(|c| c.to_ascii_lowercase());
             println!(
                 "  country: {}",
-                app.prefs.country.as_deref().unwrap_or("not set")
+                app.settings.ranking.country.as_deref().unwrap_or("not set")
             );
         }
         "size" => {
-            app.prefs.prefer_larger = matches!(rest.get(1).copied(), Some("on" | "yes" | "true"));
-            println!("  favour larger files: {}", app.prefs.prefer_larger);
+            app.settings.ranking.prefer_larger =
+                matches!(rest.get(1).copied(), Some("on" | "yes" | "true"));
+            println!(
+                "  favour larger files: {}",
+                app.settings.ranking.prefer_larger
+            );
         }
         other => println!("unknown preference '{other}'  (`prefer` to see them)"),
     }
+    // These are stored settings now, not session state, so they are written
+    // through. A preference that forgets itself on restart is a preference
+    // nobody sets twice.
+    app.save_settings();
 }
 
 // ---------------------------------------------------------------- deep links
