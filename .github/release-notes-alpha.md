@@ -113,6 +113,12 @@ Nothing leaves your machine except requests to addons you added yourself, the
 torrent swarms you asked for, and — only when you type `update` — a check
 against the release manifest.
 
+In `v0.12` that was not quite true: the torrent engine's DHT also wrote a state
+file into an OS config directory, with a record of which swarms the machine had
+joined. `v0.13` removed it. If you ran `v0.12`, that file is still wherever your
+system keeps application data — nothing reads it any more, and deleting it is
+safe.
+
 ### Honest warnings
 
 **Unsigned.** No code signing certificate yet, so SmartScreen will warn and
