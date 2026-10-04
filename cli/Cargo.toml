@@ -1,6 +1,6 @@
 [package]
 name = "eon-stream-cli"
-version = "0.12.0-alpha"
+version = "0.13.0-alpha"
 description = "EON Stream alpha: run a Stremio-compatible addon and look at what it returns."
 edition.workspace = true
 rust-version.workspace = true
@@ -14,9 +14,12 @@ path = "src/main.rs"
 
 [dependencies]
 # Pinned to an exact commit, not a branch: an alpha binary someone downloads
-# should be buildable from the same inputs tomorrow.
-eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "229f22645a895134c739805460df7c35f9e3568d" }
-eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "d542c2aa60144659d00db707c082602512d007f8" }
+# should be buildable from the same inputs tomorrow. Pin the commit whose CI
+# went green, not merely the newest one -- v0.12 shipped against a core commit
+# whose own workflow had failed to parse, which nobody would have noticed from
+# here.
+eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "80d06f15f45c762d117b0ee5da6bf04de2f83cc7" }
+eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "30e699c95d3942aadab775b513f820597275d08f" }
 ureq = "2"
 
 [dev-dependencies]

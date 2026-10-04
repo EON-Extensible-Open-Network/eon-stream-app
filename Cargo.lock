@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "eon-stream-cli"
-version = "0.12.0-alpha"
+version = "0.13.0-alpha"
 dependencies = [
  "eon-stream-core",
  "eon-stream-engine",
@@ -720,7 +720,7 @@ dependencies = [
 [[package]]
 name = "eon-stream-core"
 version = "0.0.0"
-source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-core?rev=229f22645a895134c739805460df7c35f9e3568d#229f22645a895134c739805460df7c35f9e3568d"
+source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-core?rev=80d06f15f45c762d117b0ee5da6bf04de2f83cc7#80d06f15f45c762d117b0ee5da6bf04de2f83cc7"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",
@@ -733,7 +733,7 @@ dependencies = [
 [[package]]
 name = "eon-stream-engine"
 version = "0.0.0"
-source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-engine?rev=d542c2aa60144659d00db707c082602512d007f8#d542c2aa60144659d00db707c082602512d007f8"
+source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-engine?rev=30e699c95d3942aadab775b513f820597275d08f#30e699c95d3942aadab775b513f820597275d08f"
 dependencies = [
  "librqbit",
  "rand 0.9.5",

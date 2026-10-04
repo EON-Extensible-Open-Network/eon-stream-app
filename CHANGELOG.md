@@ -14,6 +14,35 @@ already works.
 
 ## [Unreleased]
 
+## [v0.13] — 2026-10-04
+
+Found by playing a torrent through the published `v0.12` binary with mpv, rather than by
+reading the code. Everything in `v0.12` passed its tests; both of these were in the part a
+person actually sees and does.
+
+### Fixed
+- **A second run could not play anything.** Starting the engine twice failed with
+  `error binding UDP socket ... only one usage of each socket address is permitted`, and the
+  failure was total — no torrent would start. librqbit's default DHT persists its port and
+  then prefers it on the next start, so anything still holding that port (a second instance,
+  or the previous one closing) stopped the whole session. The DHT is now configured
+  explicitly with no persistence, so the OS picks a free port every run.
+- **This program was writing outside its own folder, and `v0.12`'s notes said it was not.**
+  The same DHT default wrote a JSON file into an OS config directory, carrying a `peer_store`
+  — a record of which swarms this machine had joined, outliving the session. It no longer
+  writes anything.
+- **The player's window title showed a percent-encoded name.** Someone watching Big Buck
+  Bunny read `Big%20Buck%20Bunny.mp4` in their title bar.
+- **The metadata timeout blamed the swarm for a cold DHT.** It said the torrent has no
+  seeders, which is misleading when the real cause is a bare info hash with no trackers on a
+  freshly started routing table. It now names both possibilities.
+
+### Known cost of the DHT fix
+A cold routing table at every start. It lands on exactly one path — a bare info hash with no
+trackers, which has to find peers through the DHT — and nowhere else; a magnet link carrying
+trackers never waits for it. Keeping a peer store on disk to avoid this was the trade that
+was already rejected above.
+
 ## [v0.12] — 2026-10-04
 
 ### Added — torrents play, and modules install
@@ -83,6 +112,11 @@ skips verification.
 `eon-revocations.json`, `eon-trust.json` (read only), and `eon-modules/` for installed
 module content. Nothing elsewhere, no account, nothing sent anywhere.
 
+> **This was not true in `v0.12`.** The torrent engine's DHT also wrote a state file into an
+> OS config directory, carrying a record of which swarms the machine had joined. Fixed in
+> `v0.13`; left stated here rather than quietly corrected, because a claim about what a
+> program writes to your disk is the kind a reader is entitled to see withdrawn.
+
 ## [v0.11] — 2026-09-26 — the protocol, properly
 
 Stream behaviour hints, so sources that need headers actually play. Ranked and deduplicated
@@ -121,7 +155,8 @@ acquires history is less trustworthy than one that says where it lapsed.
   a prompt. A half-generated scaffold rots and hides which decisions are actually made
   (madde 2).
 
-[Unreleased]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.12...HEAD
+[Unreleased]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.13...HEAD
+[v0.13]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.12...v0.13
 [v0.12]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.11...v0.12
 [v0.11]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.1...v0.11
 [v0.1]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.0.0-alpha...v0.1
