@@ -246,6 +246,8 @@ pub struct PlayerView {
     pub ended: bool,
     /// The episode after this one, when there is one that has aired.
     pub next: Option<NextView>,
+    /// Whether the next episode starts by itself.
+    pub autoplay: bool,
 }
 
 /// The episode that comes next, for the player's "Next episode".
@@ -1212,6 +1214,7 @@ pub fn status(session: &mut Session) -> StatusView {
                     .get_property("eof-reached")
                     .is_ok_and(|value| value == "true"),
                 next,
+                autoplay: session.settings.playback.autoplay_next,
             };
         }
     }

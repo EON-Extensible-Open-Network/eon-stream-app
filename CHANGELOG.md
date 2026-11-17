@@ -15,6 +15,28 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.22] — 2026-11-18 — the player adjusts to the viewer
+
+### Added
+- **Subtitle size**, in the player (75% to 200%) and in the settings. A size picked while
+  watching applies at once and is kept for the next title (`playback.subtitleScale`).
+- **Subtitle and sound timing.** Subtitles or sound that run early or late against the
+  picture are moved a tenth of a second at a time, with a reset — in the player's new
+  Adjust column, and for subtitles with `G` and `H`.
+- **Keyboard shortcuts on `?`**: every key the player answers to, in the interface's
+  language.
+- **Autoplay can be turned off** (`playback.autoplayNext`, on by default). Off, the card
+  near the end of an episode offers the next one and waits to be asked, at the end as
+  well.
+- The settings page shows subtitle size, autoplay and start muted.
+
+### Fixed
+- **Two playback settings were accepted and never applied by the window.** "Start muted"
+  and the `playback.playerArguments` list reached the headless build's player but not the
+  window's: `launch` built mpv's command line without them. Both apply now; the arguments
+  are still validated by core as `--flag`s only, never a bare value mpv would read as a
+  file.
+
 ## [v0.21] — 2026-11-18 — a title's page leads somewhere
 
 ### Added

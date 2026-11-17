@@ -1039,6 +1039,12 @@ pub async fn player(state: State<'_, Shared>, action: String, value: Option<f64>
             "seek-to" => player.seek(amount, SeekMode::Absolute),
             "volume" => player.set_volume(amount),
             "speed" => player.set_speed(amount),
+            // Subtitle size, and how far subtitles and sound are moved
+            // against the picture, in seconds. Absolute values: the controls
+            // hold the number and send the new one.
+            "sub-scale" => player.set_property("sub-scale", &amount.clamp(0.5, 3.0).to_string()),
+            "sub-delay" => player.set_subtitle_delay(amount.clamp(-60.0, 60.0)),
+            "audio-delay" => player.set_audio_delay(amount.clamp(-10.0, 10.0)),
             // How far above the bottom subtitles sit, in mpv's scaled pixels
             // (720 to the picture's height). The controls raise them while
             // they are up, so a line of dialogue is never under the bar.
@@ -1074,6 +1080,34 @@ pub async fn player(state: State<'_, Shared>, action: String, value: Option<f64>
         crate::surface::close_controls();
     }
     result
+}
+
+/// Subtitle size and the two delays, as the player has them now.
+#[derive(Serialize)]
+pub struct TuningView {
+    pub sub_scale: f64,
+    pub sub_delay: f64,
+    pub audio_delay: f64,
+}
+
+#[tauri::command]
+pub async fn tuning(state: State<'_, Shared>) -> Out<TuningView> {
+    with_session(&state, |session| {
+        let gone = session.text("ui.error.noplayer");
+        let player = session.player.as_mut().ok_or(gone)?;
+        let mut read = |name: &str| {
+            player
+                .get_property(name)
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+        };
+        Ok(TuningView {
+            sub_scale: read("sub-scale").unwrap_or(1.0),
+            sub_delay: read("sub-delay").unwrap_or_default(),
+            audio_delay: read("audio-delay").unwrap_or_default(),
+        })
+    })
+    .await
 }
 
 /// The audio and subtitle tracks of what is playing, for the player's menu.
@@ -1116,6 +1150,8 @@ pub async fn settings_set(
                 true
             }
             "playback.startMuted" => boolean(value, |v| candidate.playback.start_muted = v),
+            "playback.subtitleScale" => parse(value, |v| candidate.playback.subtitle_scale = v),
+            "playback.autoplayNext" => boolean(value, |v| candidate.playback.autoplay_next = v),
             "ranking.audioLanguages" => {
                 candidate.ranking.preferred_audio_languages = list(value);
                 true
@@ -1310,6 +1346,18 @@ fn launch(
     extra_args.push("--sub-shadow-color=#99000000".to_owned());
     // Embedded subtitle and audio tracks in the viewer's languages.
     extra_args.extend(subs::mpv_arguments(&session));
+    // The viewer's subtitle size, and the two playback settings the window
+    // used to accept and never apply: starting muted, and the player
+    // arguments the settings file carries (validated by core: each a
+    // `--flag`, never a bare value mpv would read as a file).
+    extra_args.push(format!(
+        "--sub-scale={}",
+        session.settings.playback.subtitle_scale
+    ));
+    if session.settings.playback.start_muted {
+        extra_args.push("--mute=yes".to_owned());
+    }
+    extra_args.extend(session.settings.playback.player_arguments.iter().cloned());
 
     let resume = playing
         .as_ref()

@@ -160,6 +160,7 @@ fn window(play: Option<String>) {
             commands::subtitle_languages,
             commands::player,
             commands::tracks,
+            commands::tuning,
             commands::buffer_clear,
             commands::settings,
             commands::settings_set,

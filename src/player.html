@@ -93,6 +93,31 @@ headless build's prompt uses.
         <button id="sub-file-open" class="sub-file" type="button" data-say="ui.subs.file"></button>
         <input id="sub-file" type="file" accept=".srt,.ass,.ssa,.vtt" hidden />
       </div>
+      <div class="column">
+        <h3 data-say="ui.player.adjust"></h3>
+        <h4 class="found-title" data-say="ui.player.subsize"></h4>
+        <div id="sizes" class="sizes" role="group"></div>
+        <h4 class="found-title" data-say="ui.player.subsync"></h4>
+        <div class="nudge">
+          <button type="button" class="step" data-tune="sub-delay" data-by="-0.1">−0.1</button>
+          <output id="sub-delay-value">0.0 s</output>
+          <button type="button" class="step" data-tune="sub-delay" data-by="0.1">+0.1</button>
+          <button type="button" class="zero" data-tune="sub-delay" data-by="0" data-say="ui.player.reset"></button>
+        </div>
+        <h4 class="found-title" data-say="ui.player.audiosync"></h4>
+        <div class="nudge">
+          <button type="button" class="step" data-tune="audio-delay" data-by="-0.1">−0.1</button>
+          <output id="audio-delay-value">0.0 s</output>
+          <button type="button" class="step" data-tune="audio-delay" data-by="0.1">+0.1</button>
+          <button type="button" class="zero" data-tune="audio-delay" data-by="0" data-say="ui.player.reset"></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Every key the player answers to, on "?". -->
+    <div id="keys" class="panel keys" hidden>
+      <h3 data-say="ui.player.keys"></h3>
+      <dl id="keys-list" class="keys-list"></dl>
     </div>
 
     <!-- The end of an episode: what comes next, and a count down to it that

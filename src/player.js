@@ -318,7 +318,12 @@ function drawNext(player, starting) {
     UPNEXT.dismissed = false;
   }
 
-  if (UPNEXT.shown) {
+  if (UPNEXT.shown && !player.autoplay) {
+    // Autoplay is off: the card offers the next episode and waits to be
+    // asked, at the end as well.
+    put($("upnext-text"), t("ui.player.playnext"));
+    $("upnext-fill").style.width = "0%";
+  } else if (UPNEXT.shown) {
     // Paused is paused: the count down waits too.
     if (player.paused && !player.ended) UPNEXT.deadline += 500;
     const left = Math.max(0, UPNEXT.deadline - Date.now());
@@ -403,6 +408,7 @@ function setupTimeline() {
 function closePanels() {
   $("tracks").hidden = true;
   $("speed").hidden = true;
+  $("keys").hidden = true;
   clearTimeout(FOUND_TIMER);
   FOUND_ALL = false;
 }
@@ -444,7 +450,83 @@ async function openTracks() {
   fill($("audio-list"), "audio", false);
   fill($("sub-list"), "sub", true);
   panel.hidden = false;
+  fillTuning();
   await fillFound();
+}
+
+/** Subtitle sizes offered, as multiples of the player's own. */
+const SIZES = [0.75, 1, 1.25, 1.5, 2];
+let TUNING = { sub_scale: 1, sub_delay: 0, audio_delay: 0 };
+
+function seconds(value) {
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded > 0 ? "+" : ""}${rounded.toFixed(1)} s`;
+}
+
+/** The adjustments column: subtitle size, and subtitles and sound moved
+ *  against the picture. */
+async function fillTuning() {
+  try {
+    TUNING = await invoke("tuning");
+  } catch (error) {
+    return;
+  }
+  const sizes = $("sizes");
+  clear(sizes);
+  for (const size of SIZES) {
+    sizes.appendChild(
+      el("button", {
+        text: t("ui.unit.percent", Math.round(size * 100)),
+        attrs: { type: "button", "aria-pressed": String(Math.abs(TUNING.sub_scale - size) < 0.01) },
+        onClick: async () => {
+          await act("sub-scale", size);
+          // Kept for the next film, too.
+          invoke("settings_set", { path: "playback.subtitleScale", value: String(size) }).catch(() => {});
+          fillTuning();
+        },
+      })
+    );
+  }
+  put($("sub-delay-value"), seconds(TUNING.sub_delay));
+  put($("audio-delay-value"), seconds(TUNING.audio_delay));
+}
+
+async function nudge(kind, by) {
+  const key = kind === "sub-delay" ? "sub_delay" : "audio_delay";
+  const value = by === 0 ? 0 : Math.round((TUNING[key] + by) * 10) / 10;
+  TUNING[key] = value;
+  put($(kind === "sub-delay" ? "sub-delay-value" : "audio-delay-value"), seconds(value));
+  await act(kind, value);
+}
+
+/** Every key, as the "?" panel lists it. */
+const KEYS = [
+  ["Space / K", "ui.player.key.toggle"],
+  ["← / →", "ui.player.key.seek10"],
+  ["Shift ← / →, J / L", "ui.player.key.seek60"],
+  ["↑ / ↓", "ui.player.key.volume"],
+  ["M", "ui.player.key.mute"],
+  ["F", "ui.player.key.fullscreen"],
+  ["N", "ui.player.key.next"],
+  ["G / H", "ui.player.key.subsync"],
+  ["Esc", "ui.player.key.back"],
+  ["?", "ui.player.key.help"],
+];
+
+function toggleKeys() {
+  const panel = $("keys");
+  if (!panel.hidden) {
+    panel.hidden = true;
+    return;
+  }
+  closePanels();
+  const list = $("keys-list");
+  clear(list);
+  for (const [keys, what] of KEYS) {
+    list.appendChild(el("dt", { text: keys }));
+    list.appendChild(el("dd", { text: t(what) }));
+  }
+  panel.hidden = false;
 }
 
 /** How many found subtitles are listed before "show all". */
@@ -598,12 +680,17 @@ function onKey(event) {
     setVolume(Number($("volume").value) - 5);
   } else if (key === "n" && !$("next").hidden) {
     playNext();
+  } else if (key === "g" || key === "h") {
+    // Subtitles earlier or later, a tenth of a second at a time.
+    fillTuning().then(() => nudge("sub-delay", key === "g" ? -0.1 : 0.1));
+  } else if (event.key === "?") {
+    toggleKeys();
   } else if (key === "m") {
     act("mute");
   } else if (key === "f") {
     act("fullscreen");
   } else if (key === "escape") {
-    if (!$("tracks").hidden || !$("speed").hidden) closePanels();
+    if (!$("tracks").hidden || !$("speed").hidden || !$("keys").hidden) closePanels();
     else if (window.innerHeight >= screen.height - 1) act("fullscreen");
     // Leaving something that never started is giving up on it.
     else if (!$("waiting").hidden) abandon();
@@ -628,6 +715,9 @@ async function boot() {
   $("stop").addEventListener("click", () => act("stop"));
   $("abandon").addEventListener("click", abandon);
   $("next").addEventListener("click", playNext);
+  for (const button of document.querySelectorAll("[data-tune]")) {
+    button.addEventListener("click", () => nudge(button.dataset.tune, Number(button.dataset.by)));
+  }
   $("upnext-play").addEventListener("click", playNext);
   $("upnext-dismiss").addEventListener("click", () => {
     UPNEXT.dismissed = true;

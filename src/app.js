@@ -1679,6 +1679,9 @@ const SETTINGS_SECTIONS = [
     title: "ui.settings.section.playback",
     fields: [
       { path: "playback.subtitleLanguages", kind: "languages" },
+      { path: "playback.subtitleScale", kind: "number", options: [0.75, 1, 1.25, 1.5, 2], percent: true },
+      { path: "playback.autoplayNext", kind: "boolean" },
+      { path: "playback.startMuted", kind: "boolean" },
       { path: "playback.volume", kind: "range", min: 0, max: 130, step: 5 },
     ],
   },
@@ -1816,7 +1819,9 @@ function control(field, current, languages) {
       values.push(Number(current));
       values.sort((a, b) => a - b);
     }
-    for (const value of values) option(String(value), field.unit ? t(field.unit, value) : String(value));
+    const named = (value) =>
+      field.percent ? t("ui.unit.percent", Math.round(value * 100)) : field.unit ? t(field.unit, value) : String(value);
+    for (const value of values) option(String(value), named(value));
     select.value = current === null || current === undefined ? "" : String(current);
   } else if (field.kind === "folder") {
     // The folder is the one setting that is a place rather than a value, and

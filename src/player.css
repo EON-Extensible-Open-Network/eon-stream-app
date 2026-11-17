@@ -413,8 +413,14 @@ body.sleep .top .control {
 
 .tracks {
   display: grid;
-  grid-template-columns: repeat(2, minmax(180px, 260px));
+  grid-template-columns: repeat(3, minmax(170px, 250px));
   gap: 28px;
+}
+
+@media (max-width: 900px) {
+  .tracks {
+    grid-template-columns: repeat(2, minmax(170px, 250px));
+  }
 }
 
 .tracks ul {
@@ -635,4 +641,73 @@ body.sleep .top .control {
   .upnext-fill {
     transition: none;
   }
+}
+
+/* ------------------------------------------------------------- adjustments */
+
+.sizes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sizes button,
+.nudge button {
+  min-height: 36px;
+  min-width: 44px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.sizes button:hover,
+.nudge button:hover,
+.sizes button:focus-visible,
+.nudge button:focus-visible {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.sizes button[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+.nudge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nudge output {
+  min-width: 58px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.keys {
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 130px;
+  width: min(520px, calc(100vw - 36px));
+}
+
+.keys-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 18px;
+  margin: 0;
+}
+
+.keys-list dt {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.keys-list dd {
+  margin: 0;
+  color: var(--muted);
 }
