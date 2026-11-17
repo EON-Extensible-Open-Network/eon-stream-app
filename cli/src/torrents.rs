@@ -34,7 +34,10 @@ use eon_stream_engine::{
     TorrentRequest,
 };
 
-use crate::text::{self, say, Text};
+use crate::{
+    paging::{Page, DEFAULT_PAGE_SIZE},
+    text::{self, say, Text},
+};
 
 /// Where the engine puts pieces, beneath the executable's own directory.
 const DOWNLOAD_SUBDIRECTORY: &str = "eon-torrents";
@@ -161,7 +164,7 @@ pub fn resolve(
         _ => match handle.best_video() {
             Ok(file) => file.index,
             Err(e) => {
-                list_files(&handle, text);
+                list_files(&handle, 1, text);
                 return Err(e.to_string());
             }
         },
@@ -222,18 +225,28 @@ pub fn resolve(
     Ok((PlaybackSource::Url(url), handle, index))
 }
 
-/// Print the file list, numbered the way `play <n> file <i>` expects.
-pub fn list_files(handle: &TorrentHandle, text: &Text) {
+/// Print a page of the file list, numbered the way `play <n> file <i>` expects.
+///
+/// A season pack can hold sixty files, which is more than a screen. Numbers
+/// are the torrent's own file indices, so they stay correct across pages --
+/// `play 3 file 41` means file 41 whichever page it was read from.
+pub fn list_files(handle: &TorrentHandle, requested: usize, text: &Text) {
+    let files = handle.files();
+    let Some(page) = Page::of(files.len(), requested, DEFAULT_PAGE_SIZE) else {
+        say!(text, "cli.torrent.nofiles");
+        return;
+    };
     say!(text, "cli.torrent.files.header");
-    for file in handle.files() {
+    for file in page.slice(files) {
         let marker = if file.is_video { "video" } else { "     " };
         println!(
-            "{:>3}. [{marker}] {:>10}  {}",
+            "{:>4}. [{marker}] {:>10}  {}",
             file.index,
             text::bytes(file.length),
             file.path
         );
     }
+    println!("{}", page.footer("files", text));
 }
 
 /// Print how the running torrents are getting on.

@@ -20,8 +20,13 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
+mod helptext;
 mod modules;
+mod paging;
 mod prefs;
+mod search;
+mod shelf;
+mod sources;
 mod text;
 mod torrents;
 
@@ -42,7 +47,7 @@ use eon_stream_core::{
     settings::Settings,
     signature::TrustStore,
     types::AddonCatalogEntry,
-    AddonClient, AddonRegistry, BuildProfile, HealthTracker, Meta, MetaPreview, Stream,
+    AddonClient, AddonRegistry, BuildProfile, HealthTracker, Library, Meta, MetaPreview, Stream,
     StreamSource, Subtitle, Video, WatchEntry, WatchHistory,
 };
 use eon_stream_engine::{MpvPlayer, PlaybackSource, PlayerOptions, SeekMode, TorrentEngine};
@@ -149,6 +154,24 @@ struct Selection {
     /// Catalogue number, query and how many items were skipped, so `more` can
     /// ask for the next page.
     page: Option<(usize, String, usize)>,
+
+    /// Which of `ranked` are on screen, by index into it.
+    ///
+    /// Narrowing by quality or reordering by a filter changes this and never
+    /// `ranked`, which is what keeps `play <n>` meaning one source for the
+    /// life of the listing.
+    visible: Vec<usize>,
+    /// The quality bucket currently selected, by position in the bucket list.
+    quality: Option<usize>,
+    /// How the visible sources are ordered beyond the ranking.
+    filter: sources::Filter,
+    /// The last search, kept so `search <n>` can page it and `search exactly`
+    /// can repeat it uncorrected.
+    search: search::Outcome,
+    /// Subtitles matching the last `sub search`, by index into `subtitles`.
+    subtitle_matches: Option<Vec<usize>>,
+    /// What the last `sub search` was for, for the header when paging it.
+    subtitle_query: String,
 }
 
 /// What is on screen, so its position can be remembered and the next episode
@@ -178,6 +201,9 @@ struct App {
     /// What this machine trusts. Empty until keys exist (madde 30, 34).
     trust: TrustStore,
     revocations: RevocationStore,
+    /// Things the viewer kept. Stremio calls this My Library; it is a file
+    /// here rather than an account.
+    library: Library,
     selection: Selection,
     player: Option<MpvPlayer>,
     playing: Option<NowPlaying>,
@@ -213,6 +239,10 @@ impl App {
                 .ok()
                 .and_then(|json| RevocationStore::from_json(&json).ok())
                 .unwrap_or_default(),
+            library: fs::read_to_string(beside_exe("eon-library.json"))
+                .ok()
+                .and_then(|json| Library::from_json(&json).ok())
+                .unwrap_or_default(),
             modules,
             settings,
             text,
@@ -231,6 +261,14 @@ impl App {
         if let Ok(json) = self.modules.to_json() {
             if let Err(e) = fs::write(beside_exe("eon-modules.json"), json) {
                 eprintln!("could not save the module list: {e}");
+            }
+        }
+    }
+
+    fn save_library(&self) {
+        if let Ok(json) = self.library.to_json() {
+            if let Err(e) = fs::write(beside_exe("eon-library.json"), json) {
+                eprintln!("could not save the library: {e}");
             }
         }
     }
@@ -397,7 +435,7 @@ fn main() {
 
 fn dispatch(app: &mut App, command: &str, rest: &[&str]) {
     match command {
-        "help" | "?" => help(&app.text),
+        "help" | "?" => helptext::section(rest, &app.text),
 
         // addons
         "add" => add(app, rest),
@@ -410,6 +448,9 @@ fn dispatch(app: &mut App, command: &str, rest: &[&str]) {
         "configure" => configure(app, rest),
         "discover" => discover(app, rest),
         "health" => health(app),
+
+        // search
+        "search" | "s" => search_command(app, rest),
 
         // browsing
         "catalogs" | "cat" => catalogs(app),
@@ -425,13 +466,38 @@ fn dispatch(app: &mut App, command: &str, rest: &[&str]) {
         "pause" | "resume" | "seek" | "where" | "stop" | "buffer" => control(app, command, rest),
         "tracks" => tracks(app),
         "audio" | "video" | "subtrack" => select_track(app, command, rest),
-        "subs" => subtitles(app),
-        "sub" => load_subtitle(app, rest),
+        "subs" => subtitles(app, rest),
+        "sub" => sub_command(app, rest),
         "speed" | "adelay" | "sdelay" | "volume" => tune(app, command, rest),
+
+        // sources
+        "sources" | "src" => sources_command(app, rest),
+        "res" | "quality" => resolution_command(app, rest),
+        "filter" => filter_command(app, rest),
+        "trailer" => trailer_command(app),
+
+        // library
+        "save" => {
+            if shelf::save(&mut app.library, &app.selection.items, rest, &app.text) {
+                app.save_library();
+            }
+        }
+        "unsave" => {
+            if shelf::unsave(&mut app.library, &app.selection.items, rest, &app.text) {
+                app.save_library();
+            }
+        }
+        "library" | "lib" => {
+            let listed = shelf::list(&app.library, rest, &app.text);
+            if !listed.is_empty() {
+                // A library row is openable by its number like any other list.
+                app.selection.items = listed;
+            }
+        }
 
         // torrents
         "torrent" | "torrents" => torrents::status(app.torrent.as_ref(), &app.text),
-        "files" => torrent_files(app),
+        "files" => torrent_files(app, rest),
 
         // modules and themes
         "modules" | "mods" => modules::list(&app.modules, &app.text),
@@ -457,6 +523,208 @@ fn dispatch(app: &mut App, command: &str, rest: &[&str]) {
 
         other => say!(app.text, "cli.error.unknowncommand", other),
     }
+}
+
+// ---------------------------------------------------------------- search
+
+fn search_command(app: &mut App, rest: &[&str]) {
+    // `search exactly` is the headless equivalent of clicking "search instead
+    // for" -- the offer is only real if something can be typed.
+    if rest.first().is_some_and(|first| {
+        first.eq_ignore_ascii_case("exactly") || first.eq_ignore_ascii_case("instead")
+    }) {
+        let Some(typed) = app.selection.search.typed.clone() else {
+            say!(app.text, "cli.search.nothingtoundo");
+            return;
+        };
+        say!(app.text, "cli.search.exactly", &typed);
+        let outcome = search::run(
+            &app.client,
+            &app.registry,
+            &app.library,
+            &app.history,
+            &typed,
+            true,
+            &app.text,
+        );
+        adopt_search(app, outcome, 1);
+        return;
+    }
+
+    // A bare number pages the last search rather than starting a new one for
+    // the word "2", which is what someone typing `search 2` means.
+    if let Some(page) = rest
+        .first()
+        .filter(|_| rest.len() == 1)
+        .and_then(|first| first.parse::<usize>().ok())
+    {
+        if app.selection.search.results.is_empty() {
+            say!(app.text, "cli.search.needsquery");
+            return;
+        }
+        let outcome = std::mem::take(&mut app.selection.search);
+        adopt_search(app, outcome, page);
+        return;
+    }
+
+    let query = rest.join(" ");
+    let outcome = search::run(
+        &app.client,
+        &app.registry,
+        &app.library,
+        &app.history,
+        &query,
+        false,
+        &app.text,
+    );
+    adopt_search(app, outcome, 1);
+}
+
+/// Show a search outcome and make its results the list numbers refer to.
+fn adopt_search(app: &mut App, outcome: search::Outcome, page: usize) {
+    search::print(&outcome, page, &app.text);
+    if !outcome.results.is_empty() {
+        app.selection.items = outcome.results.clone();
+    }
+    if outcome.was_corrected() {
+        // Kept so `search exactly` has something to undo. A search that was
+        // not corrected leaves nothing to offer back.
+        app.selection.search = outcome;
+    } else {
+        app.selection.search = search::Outcome {
+            typed: None,
+            ..outcome
+        };
+    }
+}
+
+// ---------------------------------------------------------------- sources
+
+/// Re-derive which sources are on screen, then show a page of them.
+fn show_sources(app: &mut App, page: usize) {
+    if app.selection.ranked.is_empty() {
+        say!(app.text, "cli.sources.nolist");
+        return;
+    }
+    let buckets = sources::qualities(&app.selection.ranked);
+    let quality = app
+        .selection
+        .quality
+        .and_then(|position| buckets.get(position).map(|(quality, _)| *quality));
+
+    app.selection.visible = sources::visible(
+        &app.selection.ranked,
+        quality,
+        app.selection.filter,
+        &app.settings.playback.subtitle_languages,
+    );
+
+    let showing = quality.map_or_else(
+        || app.text.get("cli.sources.allqualities"),
+        |quality| quality.label().to_owned(),
+    );
+    sources::print_page(
+        &app.selection.ranked,
+        &app.selection.visible,
+        &app.registry,
+        page,
+        &showing,
+        app.selection.filter,
+        &app.text,
+    );
+}
+
+fn sources_command(app: &mut App, rest: &[&str]) {
+    show_sources(app, paging::requested(rest));
+}
+
+fn resolution_command(app: &mut App, rest: &[&str]) {
+    if app.selection.ranked.is_empty() {
+        say!(app.text, "cli.sources.nolist");
+        return;
+    }
+    match rest.first().copied() {
+        // `res` on its own asks the question rather than answering it.
+        None => sources::print_qualities(&app.selection.ranked, &app.text),
+        Some("all" | "none" | "any") => {
+            app.selection.quality = None;
+            show_sources(app, 1);
+        }
+        Some(argument) => {
+            let buckets = sources::qualities(&app.selection.ranked);
+            match argument
+                .parse::<usize>()
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .filter(|index| *index < buckets.len())
+            {
+                Some(index) => {
+                    app.selection.quality = Some(index);
+                    show_sources(app, 1);
+                }
+                None => say!(app.text, "cli.sources.nosuchres", argument),
+            }
+        }
+    }
+}
+
+fn filter_command(app: &mut App, rest: &[&str]) {
+    let Some(word) = rest.first() else {
+        say!(app.text, "cli.filter.current", app.selection.filter.label());
+        return;
+    };
+    let Some(filter) = sources::Filter::parse(word) else {
+        say!(app.text, "cli.filter.unknown", word);
+        return;
+    };
+
+    // Promoting subtitles needs to know which language to promote, and saying
+    // so beats silently doing nothing.
+    if filter == sources::Filter::Subtitles
+        && app.settings.playback.subtitle_languages.is_empty()
+        && app.settings.ranking.preferred_audio_languages.is_empty()
+    {
+        say!(app.text, "cli.filter.subnolang");
+        return;
+    }
+
+    app.selection.filter = filter;
+    match filter {
+        sources::Filter::Subtitles => {
+            let languages = subtitle_languages(app);
+            say!(app.text, filter.message_key(), &languages.join(", "));
+        }
+        other => say!(app.text, other.message_key()),
+    }
+    show_sources(app, 1);
+}
+
+/// Which subtitle languages this session prefers.
+///
+/// Falls back to the audio-language preference, because someone who asked for
+/// Turkish audio and never set a subtitle language almost certainly wants
+/// Turkish subtitles too.
+fn subtitle_languages(app: &App) -> Vec<String> {
+    if app.settings.playback.subtitle_languages.is_empty() {
+        app.settings.ranking.preferred_audio_languages.clone()
+    } else {
+        app.settings.playback.subtitle_languages.clone()
+    }
+}
+
+fn trailer_command(app: &mut App) {
+    let Some(meta) = app.selection.meta.clone() else {
+        say!(app.text, "cli.trailer.noitem");
+        return;
+    };
+    // Stremio shows a trailer from the metadata; addons put it in `trailers`
+    // as a YouTube id, or in `trailerStreams`.
+    let Some(url) = meta.trailer_url() else {
+        say!(app.text, "cli.trailer.none");
+        return;
+    };
+    say!(app.text, "cli.trailer.playing", meta.display_name());
+    launch(app, PlaybackSource::Url(url), Vec::new(), Vec::new(), None);
 }
 
 /// Unix seconds as the signed value the signature and revocation layers use.
@@ -613,7 +881,7 @@ fn refresh_revocations(app: &mut App) {
 
 // ---------------------------------------------------------------- torrents
 
-fn torrent_files(app: &mut App) {
+fn torrent_files(app: &mut App, rest: &[&str]) {
     let Some(engine) = app.torrent.as_ref() else {
         say!(app.text, "cli.torrent.nosession");
         return;
@@ -623,13 +891,17 @@ fn torrent_files(app: &mut App) {
         say!(app.text, "cli.torrent.nosession");
         return;
     }
+    // One torrent at a time pages cleanly; several would make a page number
+    // ambiguous, so with more than one the listing stays whole and each
+    // torrent is short enough to read.
+    let page = paging::requested(rest);
     for handle in torrents {
         println!(
             "
 {}",
             handle.name().unwrap_or(handle.info_hash())
         );
-        torrents::list_files(&handle, &app.text);
+        torrents::list_files(&handle, page, &app.text);
     }
 }
 
@@ -643,77 +915,6 @@ fn confirm(text: &Text) -> bool {
     }
     let answer = line.trim().to_ascii_lowercase();
     answer == "yes" || answer == text.get("cli.common.yes").to_ascii_lowercase()
-}
-
-fn help(text: &Text) {
-    say!(text, "cli.help.header");
-    println!();
-    say!(text, "cli.help.addons");
-    println!("  add <url>            install an addon");
-    println!("  list                 installed addons and their health");
-    println!("  remove <n>           uninstall");
-    println!("  enable/disable <n>   take part in lookups, or not");
-    println!("  refresh <n>          re-fetch the manifest");
-    println!("  order <n> <pos>      move an addon; order decides priority");
-    println!("  configure <n>        where to configure an addon");
-    println!("  discover [<n>]       addons advertised by an installed addon");
-    println!("  health               which addons are failing");
-    println!();
-    say!(text, "cli.help.browsing");
-    println!("  catalogs             numbered list of catalogues");
-    println!("  browse <n> [query]   open a catalogue, optionally searching");
-    println!("  more                 next page of the last catalogue");
-    println!("  open <n>             details, sources and history for an item");
-    println!("  episodes [season]    episodes of the last opened series");
-    println!("  ep <n>               sources for episode n");
-    println!();
-    say!(text, "cli.help.playback");
-    println!("  play <n>             play source n   (or: play <url or file>)");
-    println!("  next                 next episode, keeping the same release");
-    println!("  pause / resume / stop");
-    println!("  seek <n>             jump n seconds, negative to go back");
-    println!("  where                position, duration, buffer and read speed");
-    println!("  tracks               audio, video and subtitle tracks");
-    println!("  audio|video|subtrack <n|off>   select a track");
-    println!("  subs                 subtitles from addons for what is playing");
-    println!("  sub <n>              load subtitle n into the player");
-    println!("  speed <x>  volume <n>  adelay <s>  sdelay <s>");
-    println!();
-    say!(text, "cli.help.torrents");
-    println!("  play <n>             a torrent source streams like any other");
-    println!("  play <n> file <i>    pick a file inside the torrent by index");
-    println!("  torrent              progress, rates, peers, where it is served");
-    println!("  files                every file in the running torrents");
-    println!();
-    say!(text, "cli.help.modules");
-    println!("  modules              installed modules and their load order");
-    println!("  install <manifest>   install from a module manifest file");
-    println!("  uninstall <n>        remove a module");
-    println!("  enable-module <n>  disable-module <n>  order-module <n> <pos>");
-    println!("  theme [<id>|none]    apply a theme and check its contrast");
-    println!("  theme tokens         the resolved token values");
-    println!("  trust                which signing keys this build trusts");
-    println!();
-    say!(text, "cli.help.updates");
-    println!("  settings             every setting and its value");
-    println!("  set <path> <value>   change one   (set torrent.keepFiles on)");
-    println!("  lang en|tr           interface language");
-    println!("  audit                prove nothing here reports anywhere");
-    println!("  update               look for a newer release");
-    println!("  update verify <file> check a download against the signed manifest");
-    println!("  revocations [refresh] revoked modules and keys");
-    println!();
-    say!(text, "cli.help.preferences");
-    println!("  continue             unfinished items");
-    println!("  forget <n>           drop one from history");
-    println!("  prefer               show ranking preferences");
-    println!("  prefer lang tur,eng  preferred audio languages");
-    println!("  prefer min 1080      minimum resolution, or none");
-    println!("  prefer country tur   skip geo-restricted sources");
-    println!("  prefer size on|off   favour larger files");
-    println!("  quit");
-    println!();
-    say!(text, "cli.help.hint");
 }
 
 // ---------------------------------------------------------------- addons
@@ -1151,6 +1352,14 @@ fn show_item(app: &mut App, content_type: &str, id: &str, fallback_name: &str) {
             if contributors.len() > 1 {
                 println!("  (merged from {} addons)", contributors.len());
             }
+            // Say so when this is already kept, so `save` is not offered for
+            // something that is in the library and `unsave` is discoverable.
+            if let Some(mark) = shelf::marker(&app.library, content_type, id, &app.text) {
+                println!("  ★ {mark}");
+            }
+            if meta.trailer_url().is_some() {
+                say!(app.text, "cli.trailer.available");
+            }
             app.selection.episodes = meta.videos.clone();
             meta.display_name().to_owned()
         }
@@ -1183,33 +1392,42 @@ fn list_sources(app: &mut App, content_type: &str, id: &str, name: &str) {
     }
 
     app.selection.ranked = rank(&found.items, &app.settings.ranking);
+    // A new subject starts unnarrowed: carrying a quality or a filter over
+    // from the last thing opened would silently hide most of this one.
+    app.selection.quality = None;
+    app.selection.filter = sources::Filter::None;
+    app.selection.visible = (0..app.selection.ranked.len()).collect();
 
     println!();
-    if app.selection.ranked.is_empty() && found.failures.is_empty() {
-        println!("No addon installed here provides sources for this item.");
-        println!("Cinemeta is catalogue and metadata only -- it serves no streams.");
+    if app.selection.ranked.is_empty() {
+        if found.failures.is_empty() {
+            say!(app.text, "cli.sources.none");
+            say!(app.text, "cli.sources.nonehint");
+        }
+        for failure in &found.failures {
+            println!("  addon failed: {failure}");
+        }
+        return;
     }
-    for (n, ranked) in app.selection.ranked.iter().enumerate() {
-        let kind = source_kind(&ranked.stream);
-        let addon = app
-            .registry
-            .get(&ranked.addon_id)
-            .map_or(ranked.addon_id.as_str(), |a| a.manifest.name.as_str());
-        println!(
-            "{:>3}. [{kind:>8}] {}  ·  {addon}",
-            n + 1,
-            ranked.display_label()
-        );
-    }
+
+    // The useful question about a hundred sources is narrow -- which quality,
+    // and then which of those -- so that is what gets asked first. The old
+    // behaviour printed all of them, which is a wall of text.
+    println!(
+        "{}",
+        app.text.format(
+            "cli.sources.header",
+            &[&app.selection.ranked.len().to_string(), name],
+        )
+    );
+    println!();
+    sources::print_qualities(&app.selection.ranked, &app.text);
     for failure in &found.failures {
         println!("  addon failed: {failure}");
     }
-    if !app.selection.ranked.is_empty() {
-        println!("\n{} source(s). `play <n>`", app.selection.ranked.len());
-    }
 }
 
-fn source_kind(stream: &Stream) -> &'static str {
+pub(crate) fn source_kind(stream: &Stream) -> &'static str {
     match stream.source() {
         Some(StreamSource::Direct(_)) => "http",
         Some(StreamSource::Torrent { .. }) => "torrent",
@@ -1744,9 +1962,22 @@ fn select_track(app: &mut App, command: &str, rest: &[&str]) {
     }
 }
 
-fn subtitles(app: &mut App) {
+fn subtitles(app: &mut App, rest: &[&str]) {
+    // A page number re-shows what is already fetched rather than asking every
+    // subtitle addon again: `subs 3` is turning a page, not a new search.
+    if !app.selection.subtitles.is_empty() {
+        if let Some(page) = rest
+            .first()
+            .filter(|_| rest.len() == 1)
+            .and_then(|first| first.parse::<usize>().ok())
+        {
+            print_subtitles(app, page);
+            return;
+        }
+    }
+
     let Some(playing) = app.playing.clone() else {
-        println!("nothing is playing. `play <n>` first.");
+        say!(app.text, "cli.subs.nolist");
         return;
     };
 
@@ -1777,26 +2008,153 @@ fn subtitles(app: &mut App) {
     }
 
     app.selection.subtitles = found.items.into_iter().flat_map(|(_, v)| v).collect();
+    app.selection.subtitle_matches = None;
+    app.selection.subtitle_query.clear();
     if app.selection.subtitles.is_empty() {
-        println!("no subtitles offered for this item");
+        say!(app.text, "cli.subs.none");
         return;
     }
     if matched_on_file {
-        println!("(matched on what the source told us about the file)");
+        say!(app.text, "cli.subs.matched");
     }
-    let total = app.selection.subtitles.len();
-    for (n, subtitle) in app.selection.subtitles.iter().enumerate().take(40) {
+    print_subtitles(app, paging::requested(rest));
+}
+
+/// Print one page of the subtitle tracks, or of the last `sub search` result.
+///
+/// Numbers are absolute positions in the full track list, so `sub 47` means
+/// the same track whichever page or search narrowed the view. This is the
+/// defect this whole command was rewritten for: it used to print forty tracks
+/// and say `... 38 more`, with no way to reach the thirty-eight.
+fn print_subtitles(app: &App, requested: usize) {
+    let all = &app.selection.subtitles;
+    let shown: Vec<usize> = match &app.selection.subtitle_matches {
+        Some(matches) => matches.clone(),
+        None => (0..all.len()).collect(),
+    };
+
+    let Some(page) = paging::Page::of(shown.len(), requested, paging::DEFAULT_PAGE_SIZE) else {
+        say!(app.text, "cli.subs.none");
+        return;
+    };
+
+    println!();
+    if app.selection.subtitle_matches.is_some() {
         println!(
-            "{:>3}. {}  {}",
-            n + 1,
+            "{}",
+            app.text.format(
+                "cli.subs.searchheader",
+                &[
+                    &shown.len().to_string(),
+                    &all.len().to_string(),
+                    &app.selection.subtitle_query,
+                ],
+            )
+        );
+    } else {
+        say!(app.text, "cli.subs.header", &all.len().to_string());
+    }
+    println!();
+
+    for index in page.slice(&shown) {
+        let Some(subtitle) = all.get(*index) else {
+            continue;
+        };
+        println!(
+            "{:>4}. {:<6} {}",
+            index + 1,
             subtitle.lang.as_deref().unwrap_or("??"),
             subtitle.id
         );
     }
-    if total > 40 {
-        println!("  ... {} more", total - 40);
+
+    println!();
+    // Paging a search keeps the search; paging the whole list keeps the list.
+    let command = if app.selection.subtitle_matches.is_some() {
+        format!("sub search {}", app.selection.subtitle_query)
+    } else {
+        "subs".to_owned()
+    };
+    println!("{}", page.footer(&command, &app.text));
+    say!(app.text, "cli.subs.loadhint");
+    if app.selection.subtitle_matches.is_none() && all.len() > paging::DEFAULT_PAGE_SIZE {
+        say!(app.text, "cli.subs.searchhint");
     }
-    println!("\n`sub <n>` to load one into the player");
+}
+
+/// `sub <n>` loads a track; `sub search <words>` narrows the list.
+fn sub_command(app: &mut App, rest: &[&str]) {
+    if rest.first().is_some_and(|first| {
+        first.eq_ignore_ascii_case("search") || first.eq_ignore_ascii_case("find")
+    }) {
+        subtitle_search(app, &rest[1..]);
+        return;
+    }
+    load_subtitle(app, rest);
+}
+
+/// Narrow the subtitle list by language or release name, forgiving spelling.
+fn subtitle_search(app: &mut App, rest: &[&str]) {
+    if app.selection.subtitles.is_empty() {
+        say!(app.text, "cli.subs.nolist");
+        return;
+    }
+    // A bare number pages the last search rather than searching for "2".
+    if let Some(page) = rest
+        .first()
+        .filter(|_| rest.len() == 1)
+        .and_then(|first| first.parse::<usize>().ok())
+    {
+        if app.selection.subtitle_matches.is_some() {
+            print_subtitles(app, page);
+            return;
+        }
+    }
+
+    let query = rest.join(" ");
+    if query.trim().is_empty() {
+        // An empty search is a request to see everything again.
+        app.selection.subtitle_matches = None;
+        app.selection.subtitle_query.clear();
+        print_subtitles(app, 1);
+        return;
+    }
+
+    // Each track is matched on its language and its id, because the id is
+    // usually the release name and that is what someone looking for a specific
+    // rip will type. Approximate, so `turkish`, `turkce`, `tr` and `tur` all
+    // land on the same tracks.
+    let matches: Vec<usize> = app
+        .selection
+        .subtitles
+        .iter()
+        .enumerate()
+        .filter(|(_, subtitle)| {
+            let language = subtitle.lang.as_deref().unwrap_or_default();
+            let haystacks = [language, subtitle.id.as_str()];
+            haystacks.iter().any(|field| {
+                let normalized = eon_stream_core::fuzzy::normalize(field);
+                let wanted = eon_stream_core::fuzzy::normalize(&query);
+                normalized.contains(&wanted)
+                    || eon_stream_core::fuzzy::similarity(&query, field)
+                        >= eon_stream_core::fuzzy::MIN_SIMILARITY
+            })
+        })
+        .map(|(index, _)| index)
+        .collect();
+
+    if matches.is_empty() {
+        say!(
+            app.text,
+            "cli.subs.searchnone",
+            &query,
+            &app.selection.subtitles.len().to_string()
+        );
+        return;
+    }
+    app.selection.subtitle_query = query;
+    app.selection.subtitle_matches = Some(matches);
+    print_subtitles(app, 1);
 }
 
 fn load_subtitle(app: &mut App, rest: &[&str]) {
