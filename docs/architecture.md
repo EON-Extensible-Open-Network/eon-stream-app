@@ -7,13 +7,30 @@ Working notes for the client. The authoritative decisions live in the project pl
 
 | Layer | Where | Rule |
 |---|---|---|
-| Interface | `src/` | Knows nothing about torrents or mpv. Talks to the Rust side through named IPC commands only. |
-| Host | `src-tauri/` | Owns windows, IPC commands, the module host, build profiles. |
+| Interface | `src/` | Static HTML, CSS and JavaScript. Knows nothing about torrents or mpv. Talks to the Rust side through named IPC commands only. |
+| Host | `src-tauri/` | Owns the window, the IPC commands, the session state, build profiles. |
+| Prompt | `cli/` | The headless build. Shares the libraries below, not the code above. |
 | Decisions | `eon-stream-core` | Module manager, addon protocol, signatures. No GUI dependency, ever. |
 | Bytes | `eon-stream-engine` | Torrent, local HTTP server, mpv IPC. |
 
 A GUI dependency appearing in `eon-stream-core`, or an addon URL reaching `src/`, means a layer
 has leaked.
+
+**What the interface is handed, and what it is not.** Views in `src-tauri/src/view.rs` carry
+what a person reads, not what a request needs: an addon has an id, a name and a version and
+no address; a source has an index, a label and its facts and no URL; a running torrent has an
+address with no session token. Three reasons, in order of how badly each would bite:
+
+1. A configured addon address can carry a credential in its path, and a stream URL can carry
+   a debrid token (madde 22). `addons.read` in the Module ABI makes the same promise.
+2. `src/` is the layer that would host a third-party module's code if the sandbox decision
+   (madde 4) lands on an isolated webview. What it can reach is what a module could reach.
+3. `play 3` meaning "the third source the host resolved" is also simply the clearest
+   contract: the number cannot go stale in a way that plays the wrong thing.
+
+The interface also has **no network permission at all** — no plugin is enabled, the CSP
+forbids it, and CI fails the build if a `fetch` appears in `src/`. Every request it causes is
+a command in `src-tauri/src/commands.rs`, where the whole surface is enumerated in one file.
 
 ## Player: separate process in v1
 

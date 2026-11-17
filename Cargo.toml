@@ -1,11 +1,18 @@
-# Workspace. The alpha is a terminal binary in `cli/`; the Tauri application
-# will be added as a second member (`src-tauri/`) once the mpv integration
-# proves its shape (madde 2). Nothing here needs renaming when that happens.
+# Workspace. Two binaries over the same libraries: `src-tauri/` is the window
+# (`eon-stream.exe`, the product) and `cli/` is the headless build that proved
+# every part of it (`eon-stream-cli.exe`, still shipped). The interface was the
+# last thing added, which is what madde 2 asked for.
+#
+# The version lives here rather than in either crate, because the two must
+# never disagree: both print it at startup and both send it as their HTTP
+# user-agent, so a mismatch would make one of them misreport itself. Tag `v0.X`
+# maps to `0.X.0-alpha`.
 [workspace]
-members = ["cli"]
+members = ["cli", "src-tauri"]
 resolver = "2"
 
 [workspace.package]
+version = "0.14.0-alpha"
 edition = "2021"
 rust-version = "1.98"
 license = "GPL-3.0-or-later"

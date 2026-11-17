@@ -8,11 +8,74 @@ followed by `v0.2` — and the crate version maps mechanically: tag `v0.X` is `0
 because Cargo will not accept anything but three-component semver. One consequence worth
 knowing: semver ordering is not build order during the alpha, so read the dates.
 
-**No interface until `v1`.** The whole alpha line is a terminal program, by design. Every
-piece is proven at a prompt first, so that when there is a window it sits on work that
-already works.
+**The interface arrived at `v0.14`, not at `v1`.** The plan (madde 2) had the window as the
+last thing added; it was brought forward at the owner's decision. What did not change is
+the half that mattered: every part of what the window does was working at a prompt first,
+and the headless build still ships beside it.
 
 ## [Unreleased]
+
+## [v0.14] — 2026-11-17 — there is a window
+
+`eon-stream.exe` is now a Tauri application. `eon-stream-cli.exe` is the headless build,
+published alongside it under the same naming scheme, and it is still the only place some
+things live.
+
+### Added — the interface
+- **A window** (madde 2): the system webview through Tauri, with the interface as static
+  HTML, CSS and JavaScript compiled into the binary. No bundler, no Node, no second
+  dependency tree — `cargo build` is the whole build.
+- **Home**: continue watching, your library, and every catalogue of every enabled addon as
+  a row of posters. Rows fill one at a time, so a slow addon delays its own row rather
+  than the screen.
+- **Search** across every searchable catalogue of every addon at once, with the same
+  correction towards titles that exist the prompt does.
+- **An item page**: poster, description, year, runtime, genres, cast; seasons and episodes
+  for a series, with what has been watched marked; keep it in the library or stop keeping
+  it.
+- **Sources**, ranked by the viewer's preferences, narrowed by quality bucket, each row
+  carrying what it is: torrent, seeders, size, subtitles, whether it needs headers.
+- **Playback** with a player bar: position, duration, pause, seek, stop, and — for a
+  torrent — what the swarm is doing, a line a second, while it buffers and while it plays.
+- **Addons**: add by URL, enable, disable, reorder, refresh, remove.
+- **Settings**: the preferences that change what gets picked and what gets downloaded, plus
+  the settings audit (madde 36) and what this build trusts (madde 30), said in the window
+  rather than discovered later.
+- **Turkish and English in the interface**, switchable without restarting. The interface
+  holds no text of its own: every label comes from the catalogue in `eon-stream-core`
+  (madde 40), which is what makes item 8 of the v1 definition-of-done complete.
+- `--selftest`, which checks everything behind the window that a machine can check and
+  gates the release: both catalogues, the interface's strings, the empty trust set, the
+  settings audit, and that **no addon address appears in anything the interface is
+  handed** (madde 22).
+
+### Added — at the prompt
+- One search box over every addon, quality buckets, a library (`save`, `unsave`,
+  `library`), paging everywhere, and `help` as numbered sections rather than sixty lines.
+- `trailer`, and `files` paging a season pack by the torrent's own indices.
+
+### Fixed
+- **An addon's `fileIdx` pointing at a subtitle made playback fail with "lost contact with
+  mpv".** Found by playing a torrent from the new window: the addon named file 0, file 0
+  was a 140-byte `.srt`, mpv had nothing to play and quit before answering. The engine now
+  decides which file to play — what the viewer picked, else what the addon named *if it is
+  a video*, else the largest real video — and says what mpv actually did when it will not
+  answer.
+- **Where playback got to is now remembered when mpv closes itself.** It was only recorded
+  while mpv was still running, so watching something to the end — the ordinary case — left
+  nothing in continue-watching.
+
+### Changed
+- The binaries are `eon-stream` (the window) and `eon-stream-cli` (the prompt); the
+  headless build was `eon-stream` before `v0.14`. Both read and write the same files in the
+  same folder.
+- The version lives in `[workspace.package]` so the two binaries cannot disagree about what
+  they are.
+
+### Known limits of the window
+Modules, the update check, subtitle search by hand, track selection and `eon://` deep links
+are in the headless build only. Video plays in mpv's own window (madde 2): embedding a
+native surface under the webview is a later, independent slice.
 
 ## [v0.13] — 2026-10-04
 
@@ -150,12 +213,15 @@ acquires history is less trustworthy than one that says where it lapsed.
 - `.env.example` with no network defaults.
 
 ### Still deliberately absent
-- The Tauri scaffold. The whole alpha line is headless on purpose (see the top of this
-  file); the interface is the last thing added, at `v1`, on top of work already proven from
-  a prompt. A half-generated scaffold rots and hides which decisions are actually made
-  (madde 2).
+- The Tauri scaffold. The whole alpha line is headless on purpose; the interface is the
+  last thing added, on top of work already proven from a prompt. A half-generated scaffold
+  rots and hides which decisions are actually made (madde 2).
 
-[Unreleased]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.13...HEAD
+  *Superseded at `v0.14`*, which added the interface — written against a system that
+  already worked, which is what this entry was protecting.
+
+[Unreleased]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.14...HEAD
+[v0.14]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.13...v0.14
 [v0.13]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.12...v0.13
 [v0.12]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.11...v0.12
 [v0.11]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.1...v0.11

@@ -1,0 +1,118 @@
+<!doctype html>
+<!--
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: 2026 EON contributors
+
+Additional permission under GNU GPL version 3 section 7:
+see LICENSE-EXCEPTION.md (EON Module ABI Exception 1.0).
+
+The interface. Static HTML, CSS and JavaScript -- no framework, no bundler, no
+Node. Everything a person reads here is empty in this file and filled from the
+message catalogue at startup (madde 40): a `data-say` attribute names a key,
+and a label with text baked into it would be a label nobody can translate.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EON Stream</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <nav class="rail">
+        <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <button class="tab" data-view="home" data-say="ui.nav.home"></button>
+        <button class="tab" data-view="search" data-say="ui.nav.search"></button>
+        <button class="tab" data-view="library" data-say="ui.nav.library"></button>
+        <button class="tab" data-view="addons" data-say="ui.nav.addons"></button>
+        <button class="tab" data-view="settings" data-say="ui.nav.settings"></button>
+        <div class="rail-foot">
+          <select id="language" aria-label="language"></select>
+          <span id="version" class="muted"></span>
+        </div>
+      </nav>
+
+      <main>
+        <header class="topbar">
+          <form id="search-form">
+            <input id="search-input" type="search" autocomplete="off" />
+            <button type="submit" data-say="ui.action.search"></button>
+          </form>
+          <form id="link-form">
+            <input id="link-input" type="text" autocomplete="off" />
+            <button type="submit" data-say="ui.action.open"></button>
+          </form>
+        </header>
+
+        <section class="view" id="view-home">
+          <div id="home-empty" class="empty" hidden>
+            <h2 data-say="ui.empty.title"></h2>
+            <p data-say="ui.empty.body"></p>
+            <button id="empty-add" data-say="ui.empty.action"></button>
+          </div>
+          <div id="rows"></div>
+        </section>
+
+        <section class="view" id="view-search" hidden>
+          <h2 id="search-heading"></h2>
+          <p id="search-correction" class="correction" hidden></p>
+          <div id="search-grid" class="grid"></div>
+        </section>
+
+        <section class="view" id="view-library" hidden>
+          <h2 data-say="ui.nav.library"></h2>
+          <div id="library-grid" class="grid"></div>
+        </section>
+
+        <section class="view" id="view-detail" hidden>
+          <button class="back" data-say="ui.action.back"></button>
+          <div id="detail"></div>
+        </section>
+
+        <section class="view" id="view-addons" hidden>
+          <h2 data-say="ui.nav.addons"></h2>
+          <p class="muted" data-say="ui.addons.note"></p>
+          <form id="addon-form">
+            <input id="addon-input" type="text" autocomplete="off" />
+            <button type="submit" data-say="ui.action.install"></button>
+          </form>
+          <div id="addon-list"></div>
+        </section>
+
+        <section class="view" id="view-settings" hidden>
+          <h2 data-say="ui.nav.settings"></h2>
+          <div id="settings-form"></div>
+          <h3 data-say="ui.about.title"></h3>
+          <div id="about"></div>
+        </section>
+      </main>
+    </div>
+
+    <div id="playbar" hidden>
+      <div class="playing">
+        <strong id="playing-name"></strong>
+        <span id="playing-clock" class="muted"></span>
+      </div>
+      <div class="controls">
+        <button data-player="seek" data-value="-60">−60</button>
+        <button data-player="seek" data-value="-10">−10</button>
+        <button data-player="toggle" data-say="ui.player.toggle"></button>
+        <button data-player="seek" data-value="10">+10</button>
+        <button data-player="seek" data-value="60">+60</button>
+        <button data-player="stop" data-say="ui.player.stop"></button>
+      </div>
+      <div class="progress"><div id="playing-bar"></div></div>
+      <div id="torrents" class="torrents"></div>
+    </div>
+
+    <div id="job" hidden>
+      <span id="job-text"></span>
+      <span id="job-detail" class="muted"></span>
+    </div>
+
+    <div id="toast" hidden></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

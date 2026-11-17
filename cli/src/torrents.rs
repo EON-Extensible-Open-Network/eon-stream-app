@@ -154,23 +154,16 @@ pub fn resolve(
         )
     );
 
-    // Three ways to land on a file, most explicit first: what the user typed,
-    // what the addon said, then the largest real video. The addon's `fileIdx`
-    // is usually right and occasionally refers to a file list that has since
-    // changed, which is why an out-of-range value falls through to the
-    // heuristic rather than failing.
-    let index = match explicit_file.or(source.file_index) {
-        Some(index) if handle.file(index).is_ok() => index,
-        _ => match handle.best_video() {
-            Ok(file) => file.index,
-            Err(e) => {
-                list_files(&handle, 1, text);
-                return Err(e.to_string());
-            }
-        },
+    // Which file, and why, is the engine's rule: it owns the file list and it
+    // is where that decision can be tested (eon-stream-engine::torrent).
+    let file = match handle.choose_file(explicit_file, source.file_index) {
+        Ok(file) => file,
+        Err(e) => {
+            list_files(&handle, 1, text);
+            return Err(e.to_string());
+        }
     };
-
-    let file = handle.file(index).map_err(|e| e.to_string())?;
+    let index = file.index;
     println!(
         "{}",
         text.format(

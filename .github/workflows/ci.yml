@@ -15,13 +15,9 @@ env:
   # should not break over a missing pair of backticks.
 
 jobs:
-  build:
-    name: fmt · clippy · build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest]
+  windows:
+    name: fmt · clippy · build · run (windows)
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - run: rustup show
@@ -29,11 +25,11 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked
       - run: cargo build --release --locked
-      - name: The binary must start, prompt, and exit cleanly
+
+      - name: The headless build must start, prompt, and exit cleanly
         shell: bash
         run: |
-          bin=target/release/eon-stream
-          [[ "$RUNNER_OS" == "Windows" ]] && bin=target/release/eon-stream.exe
+          bin=target/release/eon-stream-cli.exe
           # `quit` exercises startup, the prompt loop, and a clean exit.
           # `help` proves the dispatch table is wired, including playback.
           printf 'help\nquit\n' | "$bin" | tee /tmp/out.txt
@@ -51,8 +47,7 @@ jobs:
       - name: Nothing reports anywhere, checked by running it (madde 36)
         shell: bash
         run: |
-          bin=target/release/eon-stream
-          [[ "$RUNNER_OS" == "Windows" ]] && bin=target/release/eon-stream.exe
+          bin=target/release/eon-stream-cli.exe
           # The source grep in the `meta` job is a tripwire. This is the
           # actual check: `audit` walks the serialised settings document and
           # reports any key that would send something somewhere. A behaviour
@@ -63,13 +58,41 @@ jobs:
       - name: A fresh run trusts no signing key, so it installs nothing
         shell: bash
         run: |
-          bin=target/release/eon-stream
-          [[ "$RUNNER_OS" == "Windows" ]] && bin=target/release/eon-stream.exe
+          bin=target/release/eon-stream-cli.exe
           # The shipped state (madde 30, 34). If this build ever starts
           # trusting something by default, that is a decision somebody has to
           # have made on purpose, and this is where it gets noticed.
           printf 'trust\nquit\n' | "$bin" | tee /tmp/trust.txt
           grep -qi 'trusts no signing keys' /tmp/trust.txt
+
+      - name: The window's host must answer for itself, without a window
+        shell: bash
+        run: |
+          # Everything behind the interface that a machine can check: both
+          # message catalogues load, the `ui.` strings the window draws exist,
+          # the trust set is empty, the settings document reports nowhere, and
+          # no addon address appears in anything the interface is handed
+          # (madde 22). It runs on the binary that gets published, and a
+          # non-zero exit is a failed release.
+          target/release/eon-stream.exe --selftest /tmp/selftest.txt
+          cat /tmp/selftest.txt
+          grep -q '^ok$' /tmp/selftest.txt
+
+  linux:
+    name: fmt · clippy · build (linux, headless build only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      # Only `eon-stream-cli` here. The window is a Tauri host, and building it
+      # on Linux means webkit2gtk, libsoup and gtk development packages on the
+      # runner -- a system dependency chain for a platform this project does
+      # not release yet. It gets added with the Linux release, not before, so
+      # that when it is added it is because someone is about to ship it.
+      - run: cargo clippy --all-targets --locked -p eon-stream-cli
+      - run: cargo build --release --locked -p eon-stream-cli
 
   meta:
     name: docs · licences
@@ -89,8 +112,31 @@ jobs:
           # lines are excluded, because writing down *why* there is no telemetry
           # must not trip the check that there is none: an earlier version of
           # this step caught its own documentation.
-          if grep -rIn -iE 'telemetry|analytics|sentry\.io|mixpanel|posthog|amplitude\.com' cli/src 2>/dev/null | grep -vE ':[[:space:]]*(//|/\*|\*)'; then
+          if grep -rIn -iE 'telemetry|analytics|sentry\.io|mixpanel|posthog|amplitude\.com' cli/src src-tauri/src src 2>/dev/null | grep -vE ':[[:space:]]*(//|/\*|\*|#)'; then
             echo "::error::telemetry-shaped code found (madde 36)"
+            exit 1
+          fi
+      - name: The two places that carry a version must agree
+        run: |
+          # `tauri.conf.json` needs a three-component version for the Windows
+          # resource, so it cannot simply be `0.14.0-alpha` and cannot be read
+          # from Cargo. Two places, therefore, and this is what stops them
+          # drifting: the binary prints its version at startup and sends it as
+          # its user-agent, and a window whose properties disagree with the
+          # program inside it is a bug report nobody can make sense of.
+          cargo="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          conf="$(grep -m1 '"version"' src-tauri/tauri.conf.json | cut -d'"' -f4)"
+          echo "workspace: $cargo   tauri.conf.json: $conf"
+          test "${cargo%-alpha}" = "$conf"
+
+      - name: The interface must reach the network through the host only
+        run: |
+          # `src/` is the layer that would carry a third-party module's code if
+          # the sandbox decision lands on an isolated webview (madde 4). It has
+          # no network permission and must not grow one: every request it makes
+          # is a named command in src-tauri/src/commands.rs.
+          if grep -rIn -E '\b(fetch|XMLHttpRequest|WebSocket|EventSource|importScripts)\s*\(' src 2>/dev/null | grep -vE ':[[:space:]]*(//|/\*|\*)'; then
+            echo "::error::the interface is reaching the network directly"
             exit 1
           fi
 

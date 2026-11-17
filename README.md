@@ -10,8 +10,8 @@ The desktop client (Tauri + Rust). **Both builds are produced here:** EON Stream
 ## Two builds, one core
 
 ```
-cargo tauri build                      # EON Stream
-cargo tauri build --no-default-features --features edu   # EON Edu
+cargo build --release                                    # EON Stream
+cargo build --release --no-default-features --features edu   # EON Edu
 ```
 
 The Edu build does not *hide* the open marketplace, arbitrary addon URLs, or open
@@ -26,15 +26,21 @@ Edu binary and **fails the release** if a forbidden symbol appears. This matters
 guarantee given to an institution rests on it (madde 32b): "absent at compile time" has to be
 verifiable by someone who does not trust us.
 
-## Status: a working program with no interface, on purpose
+## Status: there is a window now
 
-**There is no window yet, and that is the plan rather than a shortfall.** The whole alpha
-line is a terminal program: every piece is proven at a prompt first, so that when there is
-an interface it sits on work that already works. The interface is the *last* thing added, at
-`v1`. A half-generated Tauri scaffold committed now would rot and would hide which
-decisions are actually made (madde 2).
+**`v0.14` is the first build with an interface.** It arrived during the alpha rather than at
+`v1`, which is a change from what madde 2 planned — the plan said the window came last, on
+top of work already proven at a prompt. The first half of that still held: everything the
+window does was working at a prompt first, and the headless build ships beside it.
 
-What the current build does, today, from a prompt:
+Two binaries come out of this repository, both from the same libraries:
+
+| | |
+|---|---|
+| **`eon-stream.exe`** | the product. A Tauri window: catalogues as posters, search, a library, sources ranked by quality, playback with progress, addons and settings. |
+| **`eon-stream-cli.exe`** | the headless build all of it was proven in, and still the only place some things live — modules, subtitles by hand, the update check, deep links. |
+
+What the current build does:
 
 | | |
 |---|---|
@@ -48,10 +54,12 @@ What the current build does, today, from a prompt:
 | **Themes** | declarative, no code, with a WCAG contrast report |
 | **Settings** | persisted, typed, and auditably free of anything that reports anywhere |
 | **Updates** | signed release manifests, downgrades refused, revocation applied |
-| **Language** | Turkish and English, `lang tr` |
+| **Language** | Turkish and English, in the window and at the prompt |
 
-Against the eight items of the v1 definition-of-done: 2, 3, 4, 5, 6 and 7 are done; 8 is
-done apart from the interface it describes; 1 is done apart from packaging and signing.
+Against the eight items of the v1 definition-of-done: 2, 3, 4, 5, 6, 7 and 8 are done; 1 is
+done apart from packaging and signing. What is left between here and `v1` is **the
+installer and the signing keys** — plus the parts of the window that still send a person to
+the prompt.
 
 **One thing refuses to work, by design.** `install` installs nothing, because this build
 trusts no signing keys — no key in the hierarchy exists yet (madde 30). The mechanism is
@@ -62,12 +70,18 @@ for how to mint one and watch the chain run.
 
 ```
 eon-stream-app (this repo)
-  src-tauri/     Rust: window, IPC commands, module host, build profiles
-  src/           frontend: interface, themes, declarative module rendering
+  src-tauri/     Rust: window, the IPC surface, state, build profiles
+  src/           the interface: static HTML, CSS and JavaScript. No bundler, no Node.
+  cli/           the headless build, which shares the libraries and not the code above
         |
         +-- eon-stream-core     module manager, addon protocol, signatures
         +-- eon-stream-engine   torrent, local HTTP server, mpv IPC
 ```
+
+The interface asks the host for things **by name or by number**. It never sees an addon's
+address or a stream URL — both can carry a credential (madde 22) — and it has no network
+permission of its own: every request it makes is one of the commands enumerated in
+`src-tauri/src/commands.rs`. CI fails the build if `src/` grows a `fetch`.
 
 v1 plays through **mpv as a separate process** (madde 2). Controls live in the EON Stream window,
 video in the mpv window. Embedding libmpv in a single window is a later slice; if it never
@@ -82,7 +96,7 @@ resolution, mpv playback, subtitles, resume. Add addons by URL. Sequential torre
 streaming. Module manager with signature verification. Declarative themes. Compatibility
 suite green. Turkish and English, meeting a baseline accessibility bar (madde 35).
 
-What is left between here and `v1`: the interface, the installer, and the signing keys.
+What is left between here and `v1`: the installer and the signing keys.
 
 **Not in v1:** marketplace, accounts, creator tools, material packages, music, mobile,
 code-executing plugins, Edu.
@@ -97,16 +111,25 @@ code-executing plugins, Edu.
 - **Accessibility is a release gate, not a later polish item**: full keyboard operation,
   screen-reader-usable core flows, WCAG AA contrast, scalable text (madde 35).
 
-## Build (once the scaffold exists)
+## Build
 
 ```bash
-rustup show          # toolchain pinned in rust-toolchain.toml
-npm install
-cargo tauri dev
+rustup show                      # toolchain pinned in rust-toolchain.toml
+cargo build --release            # both binaries
+cargo run -p eon-stream-app      # the window
+cargo run -p eon-stream-cli      # the prompt
 ```
 
-System requirements: a Tauri v2 toolchain (WebView2 on Windows, WebKitGTK on Linux) and mpv
-on `PATH` for playback.
+**There is no `npm install` step and there never was one.** The interface is static HTML,
+CSS and JavaScript compiled into the binary by `tauri-build`; no bundler means no second
+dependency tree to audit (madde 37) and no build that only works on a machine with Node.
+
+`cargo run -p eon-stream-app -- --selftest` is what CI runs before a release: it checks
+everything behind the window that a machine can check — both message catalogues, the
+interface's strings, the empty trust set, the settings audit, and that no addon address
+appears in anything the interface is handed.
+
+System requirements: WebView2 (present on Windows 11) and mpv for playback.
 
 ## License
 

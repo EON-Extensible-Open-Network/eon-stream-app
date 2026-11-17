@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the interface is allowed to ask the host for. Every command EON Stream defines is in commands.rs and is enumerated there; this file covers the host's built-in surface, and it is deliberately the smallest set the window needs. No plugin is enabled: no file system, no shell, no HTTP from the frontend. The interface reaches the network only through the commands below, which is what keeps an addon's address -- and the credential it can carry -- on this side of the line.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

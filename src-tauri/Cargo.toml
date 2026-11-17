@@ -1,0 +1,47 @@
+[package]
+name = "eon-stream-app"
+version.workspace = true
+description = "EON Stream: a window over the addon protocol, the torrent engine and mpv."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+# The product binary. The headless build that proved all of this is
+# `eon-stream-cli` and still ships beside it.
+name = "eon-stream"
+path = "src/main.rs"
+
+[build-dependencies]
+# Reads tauri.conf.json at compile time and embeds the frontend. Nothing in
+# this repository runs Node: the interface is static HTML, CSS and JavaScript
+# in `src/`, so there is no bundler step to go wrong and no lock file to audit
+# (madde 37).
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# The desktop shell, decided in madde 2. The webview is the system's own --
+# WebView2 on Windows -- so this adds a renderer we do not ship and do not
+# update.
+tauri = { version = "2", features = [] }
+# Decisions, protocol, signatures, settings, i18n. No GUI dependency reaches
+# the other side of this line (madde 32c).
+eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "51219e3b4c755d676f097b17cbe008ee378ae20c" }
+# Torrents, the loopback server, and mpv over JSON IPC.
+eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "407103339c81777f6ecb912d169e78deb737ece6" }
+# The IPC surface is typed on both sides; these serialise it. Already in the
+# tree through tauri.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The HTTP client. Same crate the headless build uses, for the same reason:
+# the library pulls in no network stack, so the binary chooses one.
+ureq = "2"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+# A panic in the host takes the window with it, and there is no prompt left to
+# say what happened. Same rule as eon-stream-core.
+unwrap_used = "deny"
+panic = "deny"

@@ -32,12 +32,27 @@ jobs:
       - name: Build
         run: cargo build --release --locked
 
-      - name: Stage the artefact
+      - name: The window's host must answer for itself before it ships
+        shell: bash
+        run: |
+          # The same self-test CI runs, against the binary that is about to be
+          # published rather than one built like it. A release that fails this
+          # does not get uploaded.
+          target/release/eon-stream.exe --selftest selftest.txt
+          cat selftest.txt
+          grep -q '^ok$' selftest.txt
+
+      - name: Stage the artefacts
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
           mkdir -p dist
+          # Two binaries, one naming scheme. `eon-stream` is the product: the
+          # window. `eon-stream-cli` is the headless build every part of it was
+          # proven in, and it still ships because it can do things the window
+          # cannot yet -- modules, subtitles by hand, the update check.
           cp target/release/eon-stream.exe "dist/eon-stream-${tag}-windows-x86_64.exe"
+          cp target/release/eon-stream-cli.exe "dist/eon-stream-cli-${tag}-windows-x86_64.exe"
           cd dist
           sha256sum *.exe > SHA256SUMS.txt
           cat SHA256SUMS.txt

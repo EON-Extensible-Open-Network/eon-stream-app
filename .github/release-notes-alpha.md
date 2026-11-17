@@ -1,12 +1,14 @@
 ## EON Stream — alpha
 
-**Torrents stream now.** Add a Stremio-compatible addon, browse it, and play a
-source in mpv — including a BitTorrent source, which downloads sequentially into
-a loopback server the player reads from.
+**There is a window.** Add a Stremio-compatible addon, browse its catalogues as
+posters, search across every addon at once, pick a source, and watch it in mpv —
+including a BitTorrent source, which downloads sequentially into a loopback
+server the player reads from.
 
-Still an alpha with no graphical interface: everything happens at a prompt. That
-is deliberate — the system gets proven at the command line first, and the window
-comes last.
+Two files are published. `eon-stream-…exe` is the window. `eon-stream-cli-…exe`
+is the headless build every part of it was proven in, and it still does things
+the window does not: modules, subtitles by hand, the update check, deep links.
+They sit in the same folder and share the same files.
 
 ### What works
 
@@ -49,8 +51,12 @@ today is nothing. There is no flag that skips verification.
 
 ### What does not work yet
 
-- **No graphical interface.** By design, until `v1`.
 - **No installer and no code signing.** See the warnings below.
+- **The window does not do everything the prompt does.** Modules, the update
+  check, subtitle search by hand, track selection and `eon://` deep links are
+  in `eon-stream-cli` only.
+- **Video plays in mpv's own window**, not inside the application (madde 2).
+  Controls are in the EON Stream window; the picture is in mpv's.
 - **YouTube sources** are handed to mpv's `ytdl` hook, so they need `yt-dlp`
   installed; without it they will not open.
 - **BitTorrent v2** magnet links (`btmh`) are refused by name. This build reads
@@ -70,19 +76,20 @@ If it is somewhere unusual, set `EON_MPV_PATH` to the full path of `mpv.exe`.
 
 ### Try it
 
-Download the `.exe` into a folder of its own and run it from PowerShell or
-Windows Terminal:
+Download both files into a folder of their own and run `eon-stream-…exe`. It
+opens with nothing in it, because nothing is bundled — go to **Addons**, paste a
+manifest URL, and the home screen fills with what that addon offers:
 
 ```
-add https://v3-cinemeta.strem.io/manifest.json
-catalogs
-browse 1
-open 3
+https://v3-cinemeta.strem.io/manifest.json
 ```
 
-Cinemeta serves catalogues and metadata only, so `open` will find no sources.
-That is Cinemeta behaving correctly. To see playback immediately, hand `play` a
-URL, a file, or a magnet link directly:
+Cinemeta serves catalogues and metadata only, so opening a film will find no
+sources. That is Cinemeta behaving correctly: it tells you what exists, and a
+streaming addon tells you where to watch it. To see playback immediately, paste
+a magnet link, a URL or a file path into the **Open** box at the top.
+
+The prompt is still there, in `eon-stream-cli-…exe`:
 
 ```
 play https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4
@@ -103,9 +110,10 @@ recommendation.)
 
 ### What it writes
 
-Everything beside the executable, and nothing anywhere else:
-`eon-addons.json`, `eon-history.json`, `eon-settings.json`, `eon-modules.json`,
-`eon-revocations.json`, `eon-modules/` for installed module content, and
+Everything beside the executable, and nothing anywhere else — both binaries
+share these files: `eon-addons.json`, `eon-history.json`, `eon-library.json`,
+`eon-settings.json`, `eon-modules.json`, `eon-revocations.json`,
+`eon-modules/` for installed module content, and
 `eon-torrents/` for downloaded pieces — which are discarded on exit unless you
 set `torrent.keepFiles`. Delete any of them to start that part over.
 
@@ -124,6 +132,10 @@ safe.
 **Unsigned.** No code signing certificate yet, so SmartScreen will warn and
 **Smart App Control will block it outright if you have that turned on**. We are
 not asking anyone to disable a security feature to run an alpha.
+
+**The window needs WebView2**, which Windows 11 has and Windows 10 usually does.
+It is Microsoft's, it is not shipped here, and it is what the interface is drawn
+with.
 
 **Verify what you downloaded** against `SHA256SUMS.txt`:
 
