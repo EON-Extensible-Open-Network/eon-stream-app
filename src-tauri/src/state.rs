@@ -216,6 +216,10 @@ pub struct Session {
     pub playing_torrent: Option<String>,
     /// Subtitles found for what is playing, loaded or not.
     pub subtitles: crate::subs::Found,
+    /// The last calendar: when it was made, which series it covered, and
+    /// what it said. Asking every series' addon on every visit to the home
+    /// screen would be dozens of requests for an answer that changes daily.
+    pub calendar: Option<(u64, String, crate::view::CalendarView)>,
 }
 
 impl Session {
@@ -261,6 +265,7 @@ impl Session {
             job: Arc::new(Mutex::new(Job::default())),
             playing_torrent: None,
             subtitles: crate::subs::Found::default(),
+            calendar: None,
         }
     }
 

@@ -144,6 +144,7 @@ fn window(play: Option<String>) {
             commands::sources,
             commands::library,
             commands::more_like,
+            commands::calendar,
             commands::trailer,
             commands::library_save,
             commands::library_remove,

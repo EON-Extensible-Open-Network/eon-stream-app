@@ -240,6 +240,7 @@ function go(target) {
     renderHome();
   } else if (target === "new") openNew();
   else if (target === "discover") openDiscover();
+  else if (target === "calendar") openCalendar();
   else if (target === "library") openLibrary();
   else if (target === "addons") loadAddons();
   else if (target === "settings") loadSettings();
@@ -392,6 +393,119 @@ async function loadRows() {
     loading: null,
   }));
   renderHome();
+  addNewEpisodes();
+}
+
+// ------------------------------------------------------------ new episodes
+
+let CALENDAR = null;
+
+/** New episodes of the library's series, as a row after "Continue
+ *  watching". Asked after the rest of the home screen, because it asks every
+ *  series' addon; the host keeps the answer for half an hour. */
+async function addNewEpisodes() {
+  let found;
+  try {
+    found = await invoke("calendar", { fresh: false });
+  } catch (error) {
+    return;
+  }
+  CALENDAR = found;
+  // The number on the calendar link is how many series have something new.
+  const dot = document.getElementById("calendar-dot");
+  dot.hidden = found.fresh.length === 0;
+  dot.textContent = found.fresh.length ? String(found.fresh.length) : "";
+  dot.setAttribute("aria-label", t("ui.calendar.newcount", found.fresh.length));
+  ROWS = ROWS.filter((row) => row.kind !== "fresh");
+  if (found.fresh.length === 0) return;
+  const row = {
+    kind: "fresh",
+    title: t("ui.row.fresh"),
+    items: found.fresh,
+    loaded: true,
+    exhausted: true,
+    loading: null,
+  };
+  ROWS.splice(ROWS.findIndex((other) => other.kind === "continue") + 1, 0, row);
+  // Drawn in place: the rest of the screen stays as it is.
+  if (document.getElementById("view-home").hidden) return;
+  const container = document.getElementById("rows");
+  const at = rowsForFilter().indexOf(row);
+  if (at === -1) return;
+  container.insertBefore(slider(row), container.children[at] || null);
+}
+
+/** Today's date, as the addons write dates. */
+function isoToday() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+async function openCalendar() {
+  showView("calendar");
+  const list = document.getElementById("calendar-list");
+  const note = document.getElementById("calendar-note");
+  clear(list);
+  note.hidden = true;
+  list.appendChild(el("div", { className: "spinner", text: t("ui.loading") }));
+  let found;
+  try {
+    found = await ask("calendar", { fresh: false });
+  } catch (error) {
+    clear(list);
+    return;
+  }
+  CALENDAR = found;
+  clear(list);
+  if (found.failures.length) toast(found.failures.join("\n"));
+  if (found.episodes.length === 0) {
+    const rows = await ask("library", { order: "recent" });
+    note.textContent = t(rows.some((item) => item.content_type === "series") ? "ui.calendar.empty" : "ui.calendar.nolibrary");
+    note.hidden = false;
+    return;
+  }
+  const today = isoToday();
+  const dayName = new Intl.DateTimeFormat(MESSAGES.__locale || "en", { weekday: "long", day: "numeric", month: "long" });
+  const section = (titleKey, episodes) => {
+    if (episodes.length === 0) return;
+    list.appendChild(el("h3", { className: "section-title", text: t(titleKey) }));
+    let day = null;
+    for (const episode of episodes) {
+      if (episode.date !== day) {
+        day = episode.date;
+        const date = new Date(`${day}T12:00:00`);
+        const label = day === today ? `${t("ui.calendar.today")} · ${dayName.format(date)}` : dayName.format(date);
+        list.appendChild(el("h4", { className: "cal-day", text: label }));
+      }
+      const thumb = el("div", { className: "cal-thumb" });
+      if (episode.poster) thumb.appendChild(image(episode.poster, ""));
+      const state = episode.watched ? "ui.episode.watched" : episode.aired ? "ui.calendar.aired" : "ui.calendar.upcoming";
+      list.appendChild(
+        el(
+          "button",
+          {
+            className: "cal-entry",
+            attrs: { type: "button" },
+            onClick: () => openDetail("series", episode.series_id),
+          },
+          [
+            thumb,
+            el("span", { className: "grow" }, [
+              el("div", { className: "title", text: episode.series_name }),
+              el("div", { className: "when", text: episode.title ? `${episode.label} · ${episode.title}` : episode.label }),
+            ]),
+            el("span", { className: `pill${episode.aired && !episode.watched ? " on" : ""}`, text: t(state) }),
+          ]
+        )
+      );
+    }
+  };
+  // What is coming, soonest first; then what aired, newest first.
+  section("ui.calendar.coming", found.episodes.filter((episode) => !episode.aired));
+  section(
+    "ui.calendar.recent",
+    found.episodes.filter((episode) => episode.aired).reverse()
+  );
 }
 
 function rowsForFilter() {
@@ -736,7 +850,7 @@ async function runSearch(query, typing = false) {
 /** Where Discover is: the choices, how far the grid has loaded, and whether
  *  more is coming. Kept when the page is left, so going back to it from a
  *  title is going back to where one was. */
-const DISCOVER = { type: null, row: null, genre: "", skip: 0, done: false, busy: false, token: 0, built: false };
+const DISCOVER = { type: null, row: null, genre: "", skip: 0, done: false, busy: false, token: 0, built: false, rows: [] };
 
 function discoverRows() {
   return ROWS.filter((row) => row.kind === "catalog");
@@ -748,6 +862,7 @@ async function openDiscover() {
   if (DISCOVER.built) return;
   DISCOVER.built = true;
   const rows = discoverRows();
+  DISCOVER.rows = rows;
   const empty = document.getElementById("discover-empty");
   if (rows.length === 0) {
     empty.textContent = t("ui.discover.empty");
@@ -774,11 +889,11 @@ async function openDiscover() {
     rows
       .filter((row) => row.content_type === typeSelect.value)
       .forEach((row) => {
-        catalogSelect.appendChild(el("option", { text: row.title, attrs: { value: String(ROWS.indexOf(row)) } }));
+        catalogSelect.appendChild(el("option", { text: row.title, attrs: { value: String(rows.indexOf(row)) } }));
       });
   };
   const fillGenres = () => {
-    const row = ROWS[Number(catalogSelect.value)];
+    const row = DISCOVER.rows[Number(catalogSelect.value)];
     clear(genreSelect);
     if (!row.genre_required) genreSelect.appendChild(el("option", { text: t("ui.sources.any"), attrs: { value: "" } }));
     for (const genre of row.genres) genreSelect.appendChild(el("option", { text: genre, attrs: { value: genre } }));
@@ -824,7 +939,7 @@ async function openDiscoverAt(type, genre) {
   if (![...typeSelect.options].some((option) => option.value === type)) return;
   typeSelect.value = type;
   DISCOVER.fillCatalogs();
-  const fits = [...catalogSelect.options].find((option) => ROWS[Number(option.value)].genres.includes(genre));
+  const fits = [...catalogSelect.options].find((option) => DISCOVER.rows[Number(option.value)].genres.includes(genre));
   if (fits) catalogSelect.value = fits.value;
   DISCOVER.fillGenres();
   if ([...genreSelect.options].some((option) => option.value === genre)) genreSelect.value = genre;
@@ -832,7 +947,7 @@ async function openDiscoverAt(type, genre) {
 }
 
 function restartDiscover() {
-  const row = ROWS[Number(document.getElementById("discover-catalog").value)];
+  const row = DISCOVER.rows[Number(document.getElementById("discover-catalog").value)];
   DISCOVER.row = row;
   DISCOVER.genre = document.getElementById("discover-genre").value;
   DISCOVER.skip = 0;

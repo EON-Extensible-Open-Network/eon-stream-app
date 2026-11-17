@@ -342,6 +342,26 @@ pub async fn detail(state: State<'_, Shared>, content_type: String, id: String) 
     .await
 }
 
+/// The calendar: episodes of the library's series from a month back to two
+/// months ahead, and the new ones as home-screen cards. Kept for half an
+/// hour unless the library's series change, or `fresh` asks again.
+#[tauri::command]
+pub async fn calendar(state: State<'_, Shared>, fresh: Option<bool>) -> Out<view::CalendarView> {
+    if !fresh.unwrap_or(false) {
+        if let Some(kept) = with_session(&state, |session| Ok(view::calendar_kept(session))).await?
+        {
+            return Ok(kept);
+        }
+    }
+    with_network(
+        &state,
+        |session| Ok(view::calendar_request(session)),
+        |(net, series)| view::fetch_calendar(net, series),
+        |session, _, answers| Ok(view::calendar(session, answers)),
+    )
+    .await
+}
+
 /// More of the open title's genre, from an addon catalogue narrowed to it,
 /// without the title itself. `None` when no addon can narrow by genre.
 #[tauri::command]

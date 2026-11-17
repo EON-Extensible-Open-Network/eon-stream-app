@@ -1717,6 +1717,95 @@ button.pill:focus-visible {
   display: none;
 }
 
+/* ----------------------------------------------------------------- calendar */
+
+.link .dot {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #0a0c12;
+  background: var(--accent);
+  vertical-align: 1px;
+}
+
+.calendar {
+  max-width: 860px;
+}
+
+.cal-day {
+  margin: 22px 0 8px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.cal-entry {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px;
+  border-radius: var(--radius);
+  text-align: left;
+  color: var(--text);
+}
+
+.cal-entry:hover,
+.cal-entry:focus-visible {
+  background: var(--surface-2);
+}
+
+.cal-thumb {
+  flex: none;
+  width: 54px;
+  aspect-ratio: 2 / 3;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.cal-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cal-entry .title {
+  font-weight: 700;
+}
+
+.cal-entry .when {
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 2px;
+}
+
+.cal-entry .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.cal-entry .pill {
+  flex: none;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.cal-entry .pill.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* ----------------------------------------------------------------- discover */
 
 .discover-bar {

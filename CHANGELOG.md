@@ -15,6 +15,23 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.23] — 2026-11-18 — new episodes, and when the next ones come
+
+### Added
+- **Calendar.** A page with the episodes of the library's series from a month back to two
+  months ahead: what is coming up, soonest first, and what aired recently, newest first,
+  each marked new, coming or watched. A press opens the series.
+- **New episodes on the home screen.** After "Continue watching", one card per series in
+  the library with an episode that aired in the last two weeks and has not been watched —
+  the newest such episode. The calendar link carries the number of such series.
+- The calendar asks every series' addon — eight at a time, and at most the forty series
+  most recently kept — so the answer is kept for half an hour, or until the library's
+  series change, rather than asked on every visit to the home screen.
+
+### Changed
+- Discover keeps its own list of catalogues, so a row added to the home screen later (the
+  new-episodes row) can no longer shift what its catalogue choices point at.
+
 ## [v0.22] — 2026-11-18 — the player adjusts to the viewer
 
 ### Added

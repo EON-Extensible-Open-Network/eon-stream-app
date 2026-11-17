@@ -81,7 +81,7 @@ pub struct AddonView {
 }
 
 /// One thing in a row or a grid.
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct ItemView {
     pub id: String,
     pub content_type: String,
@@ -551,6 +551,199 @@ pub fn rows(session: &Session) -> Vec<RowView> {
         }
     }
     rows
+}
+
+/// One episode on the calendar.
+#[derive(Serialize, Clone)]
+pub struct CalendarEpisode {
+    pub series_id: String,
+    pub series_name: String,
+    pub poster: Option<String>,
+    pub video_id: String,
+    /// `S01E02`.
+    pub label: String,
+    /// The episode's own name, when the addon gives one.
+    pub title: Option<String>,
+    /// `YYYY-MM-DD`, as the addon dated it.
+    pub date: String,
+    pub aired: bool,
+    pub watched: bool,
+}
+
+/// The episodes of the library's series around today, and the new ones as
+/// home-screen cards.
+#[derive(Serialize, Clone)]
+pub struct CalendarView {
+    pub episodes: Vec<CalendarEpisode>,
+    /// Aired in the last fortnight and not watched, newest first: the home
+    /// screen's "New episodes".
+    pub fresh: Vec<ItemView>,
+    pub failures: Vec<String>,
+}
+
+/// How far back and ahead the calendar looks, in days.
+const CALENDAR_BACK_DAYS: i64 = 30;
+const CALENDAR_AHEAD_DAYS: i64 = 60;
+/// How recent an episode must be to count as new on the home screen.
+const FRESH_DAYS: i64 = 14;
+/// How many series are asked about. A library of hundreds is asked about
+/// its most recently kept, rather than sending hundreds of requests.
+const CALENDAR_SERIES: usize = 40;
+/// How long an answer is reused before the addons are asked again.
+const CALENDAR_KEEP_SECS: u64 = 30 * 60;
+
+/// What the calendar asks for: the library's series, newest kept first.
+pub fn calendar_request(session: &Session) -> (Net, Vec<(String, String, Option<String>)>) {
+    let series = session
+        .library
+        .list(LibraryOrder::Recent)
+        .into_iter()
+        .filter(|entry| entry.content_type == "series")
+        .take(CALENDAR_SERIES)
+        .map(|entry| (entry.id.clone(), entry.name.clone(), entry.poster.clone()))
+        .collect();
+    (Net::of(session), series)
+}
+
+/// Ask for every series' episodes, eight at a time, with nothing locked.
+pub fn fetch_calendar(
+    net: &Net,
+    series: &[(String, String, Option<String>)],
+) -> Vec<(String, String, Option<String>, Fetched)> {
+    let mut out = Vec::new();
+    for chunk in series.chunks(8) {
+        let answers: Vec<_> = std::thread::scope(|scope| {
+            let handles: Vec<_> = chunk
+                .iter()
+                .map(|(id, _, _)| scope.spawn(move || fetch_meta(net, "series", id)))
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap_or((None, Vec::new())))
+                .collect()
+        });
+        for ((id, name, poster), fetched) in chunk.iter().zip(answers) {
+            out.push((id.clone(), name.clone(), poster.clone(), fetched));
+        }
+    }
+    out
+}
+
+/// Days from 1970-01-01 to a `YYYY-MM-DD` date.
+fn days_of(date: &str) -> Option<i64> {
+    let mut parts = date.get(..10)?.split('-');
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = parts.next()?.parse().ok()?;
+    let day: i64 = parts.next()?.parse().ok()?;
+    // Howard Hinnant's days-from-civil.
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let yoe = year - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+/// Fold the answers into the calendar, and remember it for a while.
+pub fn calendar(
+    session: &mut Session,
+    answers: Vec<(String, String, Option<String>, Fetched)>,
+) -> CalendarView {
+    let today = days_of(&today()).unwrap_or_default();
+    let mut episodes = Vec::new();
+    let mut failures = Vec::new();
+    for (series_id, series_name, poster, (meta, failed)) in answers {
+        failures.extend(describe_failures(&failed));
+        let Some(meta) = meta else { continue };
+        let poster = poster.or_else(|| meta.poster.clone());
+        for video in &meta.videos {
+            let (Some(_), Some(_), Some(released)) = (video.season, video.episode, &video.released)
+            else {
+                continue;
+            };
+            let Some(day) = days_of(released) else {
+                continue;
+            };
+            if day < today - CALENDAR_BACK_DAYS || day > today + CALENDAR_AHEAD_DAYS {
+                continue;
+            }
+            episodes.push(CalendarEpisode {
+                series_id: series_id.clone(),
+                series_name: series_name.clone(),
+                poster: poster.clone(),
+                video_id: video.id.clone(),
+                label: episode_code(video),
+                title: video
+                    .title
+                    .as_ref()
+                    .or(video.name.as_ref())
+                    .filter(|title| !title.trim().is_empty())
+                    .cloned(),
+                date: released.get(..10).unwrap_or(released).to_owned(),
+                aired: day <= today,
+                watched: session
+                    .history
+                    .get("series", &video.id)
+                    .is_some_and(eon_stream_core::WatchEntry::is_finished),
+            });
+        }
+    }
+    episodes.sort_by(|a, b| a.date.cmp(&b.date).then(a.series_name.cmp(&b.series_name)));
+    // One card per series: its newest episode not yet watched.
+    let mut carded = std::collections::HashSet::new();
+    let fresh = episodes
+        .iter()
+        .rev()
+        .filter(|episode| {
+            episode.aired
+                && !episode.watched
+                && days_of(&episode.date).is_some_and(|day| day >= today - FRESH_DAYS)
+        })
+        .filter(|episode| carded.insert(episode.series_id.clone()))
+        .map(|episode| ItemView {
+            id: episode.series_id.clone(),
+            content_type: "series".to_owned(),
+            name: episode.series_name.clone(),
+            poster: episode.poster.clone(),
+            description: episode.title.clone(),
+            year: Some(episode.date.clone()),
+            rating: None,
+            in_library: true,
+            progress: None,
+            resume_at: None,
+            episode_label: Some(episode.label.clone()),
+        })
+        .collect();
+    let view = CalendarView {
+        episodes,
+        fresh,
+        failures,
+    };
+    session.calendar = Some((now_unix(), library_mark(session), view.clone()));
+    view
+}
+
+/// The calendar remembered, while it is recent and the library has not
+/// changed since.
+pub fn calendar_kept(session: &Session) -> Option<CalendarView> {
+    let (when, mark, view) = session.calendar.as_ref()?;
+    (now_unix().saturating_sub(*when) < CALENDAR_KEEP_SECS && *mark == library_mark(session))
+        .then(|| view.clone())
+}
+
+/// Which series are kept, as one string: the calendar is asked again when it
+/// changes.
+fn library_mark(session: &Session) -> String {
+    session
+        .library
+        .list(LibraryOrder::Recent)
+        .into_iter()
+        .filter(|entry| entry.content_type == "series")
+        .take(CALENDAR_SERIES)
+        .map(|entry| entry.id.as_str())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// More of a genre, for a title's page.
@@ -1396,5 +1589,16 @@ mod date_tests {
         let today = super::today();
         assert_eq!(today.len(), 10);
         assert!(today.as_str() > "2026-01-01");
+    }
+
+    #[test]
+    fn a_date_counts_days_from_1970() {
+        assert_eq!(super::days_of("1970-01-01"), Some(0));
+        assert_eq!(super::days_of("2000-03-01T00:00:00.000Z"), Some(11_017));
+        assert_eq!(
+            super::days_of(&super::today()),
+            Some(i64::try_from(super::now_unix() / 86_400).unwrap_or_default())
+        );
+        assert_eq!(super::days_of("not a date"), None);
     }
 }

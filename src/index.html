@@ -38,6 +38,9 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
         <button class="link" type="button" data-go="movie" data-say="ui.nav.movies"></button>
         <button class="link" type="button" data-go="new" data-say="ui.nav.new"></button>
         <button class="link" type="button" data-go="discover" data-say="ui.nav.discover"></button>
+        <button class="link" type="button" data-go="calendar">
+          <span data-say="ui.nav.calendar"></span><span id="calendar-dot" class="dot" hidden></span>
+        </button>
         <button class="link" type="button" data-go="library" data-say="ui.nav.library"></button>
         <button class="link" type="button" data-go="addons" data-say="ui.nav.addons"></button>
       </nav>
@@ -102,6 +105,14 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
         <p id="discover-empty" class="lede" hidden></p>
         <div id="discover-grid" class="grid"></div>
         <div id="discover-more" class="discover-more" aria-hidden="true"></div>
+      </section>
+
+      <!-- The episodes of the library's series around today: what aired
+           lately, and what is coming. -->
+      <section class="view page" id="view-calendar" hidden>
+        <h2 class="page-title" data-say="ui.nav.calendar"></h2>
+        <p id="calendar-note" class="lede" hidden></p>
+        <div id="calendar-list" class="calendar"></div>
       </section>
 
       <section class="view page" id="view-library" hidden>
