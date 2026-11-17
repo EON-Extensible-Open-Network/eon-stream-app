@@ -799,6 +799,8 @@ async function openDiscover() {
 
   fillCatalogs();
   fillGenres();
+  DISCOVER.fillCatalogs = fillCatalogs;
+  DISCOVER.fillGenres = fillGenres;
 
   // The next page when the end of the grid comes near.
   const observer = new IntersectionObserver(
@@ -808,6 +810,24 @@ async function openDiscover() {
     { rootMargin: "600px 0px" }
   );
   observer.observe(document.getElementById("discover-more"));
+  restartDiscover();
+}
+
+/** Discover, opened on one genre of one type: the first catalogue of that
+ *  type that can be narrowed to it. */
+async function openDiscoverAt(type, genre) {
+  await openDiscover();
+  if (!DISCOVER.fillCatalogs) return;
+  const typeSelect = document.getElementById("discover-type");
+  const catalogSelect = document.getElementById("discover-catalog");
+  const genreSelect = document.getElementById("discover-genre");
+  if (![...typeSelect.options].some((option) => option.value === type)) return;
+  typeSelect.value = type;
+  DISCOVER.fillCatalogs();
+  const fits = [...catalogSelect.options].find((option) => ROWS[Number(option.value)].genres.includes(genre));
+  if (fits) catalogSelect.value = fits.value;
+  DISCOVER.fillGenres();
+  if ([...genreSelect.options].some((option) => option.value === genre)) genreSelect.value = genre;
   restartDiscover();
 }
 
@@ -973,7 +993,17 @@ async function openDetail(contentType, id) {
   for (const fact of [detail.year, detail.runtime]) {
     if (fact) facts.appendChild(el("span", { text: fact }));
   }
-  for (const genre of detail.genres.slice(0, 4)) facts.appendChild(el("span", { className: "pill", text: genre }));
+  // A genre is a way in: Discover, narrowed to it.
+  for (const genre of detail.genres.slice(0, 4)) {
+    facts.appendChild(
+      el("button", {
+        className: "pill",
+        text: genre,
+        attrs: { type: "button", title: t("ui.detail.browsegenre", genre) },
+        onClick: () => openDiscoverAt(detail.content_type, genre),
+      })
+    );
+  }
 
   const actions = el("div", { className: "detail-actions" });
   const playLabel = detail.resume_at ? t("ui.action.resume", detail.resume_at) : t("ui.action.play");
@@ -995,6 +1025,20 @@ async function openDetail(contentType, id) {
     over.appendChild(icon("refresh"));
     over.appendChild(el("span", { text: t("ui.action.startover") }));
     actions.appendChild(over);
+  }
+
+  if (detail.has_trailer) {
+    const trailer = el("button", {
+      className: "button ghost",
+      attrs: { type: "button" },
+      onClick: async () => {
+        const where = await ask("trailer");
+        if (where === "browser") toast(t("ui.detail.trailerbrowser"));
+      },
+    });
+    trailer.appendChild(icon("play"));
+    trailer.appendChild(el("span", { text: t("ui.detail.trailer") }));
+    actions.appendChild(trailer);
   }
 
   const keep = el("button", { className: "round", attrs: { type: "button" } });
@@ -1025,11 +1069,25 @@ async function openDetail(contentType, id) {
     actions,
   ]);
   if (detail.cast.length || detail.director.length) {
+    // Each name searches every addon for it.
+    const people = (key, names) => {
+      const line = el("div", {}, [el("span", { className: "credit-label", text: t(key) })]);
+      names.forEach((name, at) => {
+        if (at > 0) line.appendChild(document.createTextNode(", "));
+        line.appendChild(
+          el("button", {
+            className: "name-link",
+            text: name,
+            attrs: { type: "button", title: t("ui.detail.searchname", name) },
+            onClick: () => runSearch(name),
+          })
+        );
+      });
+      return line;
+    };
     const credits = el("div", { className: "credits" });
-    if (detail.cast.length) {
-      credits.appendChild(el("div", { text: t("ui.detail.cast", detail.cast.slice(0, 5).join(", ")) }));
-    }
-    if (detail.director.length) credits.appendChild(el("div", { text: detail.director.slice(0, 3).join(", ") }));
+    if (detail.cast.length) credits.appendChild(people("ui.detail.castlabel", detail.cast.slice(0, 5)));
+    if (detail.director.length) credits.appendChild(people("ui.detail.directorlabel", detail.director.slice(0, 3)));
     copy.appendChild(credits);
   }
 
@@ -1050,6 +1108,20 @@ async function openDetail(contentType, id) {
   // A film's sources are what its page is for, so they are listed straight
   // away. A series waits for an episode to be chosen.
   if (detail.episodes.length === 0) loadSources(detail.content_type, detail.id, detail.name);
+
+  // More of the same genre, from an addon catalogue narrowed to it -- named
+  // for what it is, not "like this": nothing here judges likeness.
+  const more = el("section", { className: "more-like" });
+  sections.appendChild(more);
+  invoke("more_like", { contentType: detail.content_type, id: detail.id })
+    .then((found) => {
+      if (!found || found.items.length === 0 || DETAIL !== detail) return;
+      more.appendChild(el("h2", { className: "section-title", text: t("ui.detail.more", found.genre) }));
+      const grid = el("div", { className: "grid" });
+      for (const item of found.items.slice(0, 18)) grid.appendChild(card(item));
+      more.appendChild(grid);
+    })
+    .catch(() => more.remove());
 }
 
 function backButton() {

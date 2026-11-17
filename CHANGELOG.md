@@ -15,6 +15,23 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.21] — 2026-11-18 — a title's page leads somewhere
+
+### Added
+- **Trailers.** A title whose addon lists a trailer has a Trailer button. A direct file
+  plays in the window; a YouTube trailer plays in the window when `yt-dlp` is beside this
+  program or on the `PATH`, for mpv's ytdl hook to use, and otherwise opens in the system
+  browser — with a note saying how to keep it in the window. A browser is the one thing
+  this program hands a link to, and only on that press.
+- **Names are searches.** Each cast member and director on a title's page searches every
+  addon for them.
+- **Genres are a way in.** A genre on a title's page opens Discover on that genre, in the
+  first catalogue of the title's type that can be narrowed to it.
+- **More of the genre.** A title's page ends with more titles of its genre: an addon
+  catalogue narrowed to that genre, without the title itself. It is called "More
+  Adventure", not "More like this", because that is what it is — nothing here decides
+  what is like what, and no addon was asked to.
+
 ## [v0.2] — 2026-11-18 — discover, and a library that shows everything
 
 The twentieth alpha: `v0.19` is followed by `v0.2`, per the version scheme above.

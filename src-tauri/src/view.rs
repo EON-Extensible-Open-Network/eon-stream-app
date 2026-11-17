@@ -551,6 +551,64 @@ pub fn rows(session: &Session) -> Vec<RowView> {
     rows
 }
 
+/// More of a genre, for a title's page.
+#[derive(Serialize)]
+pub struct MoreView {
+    /// The genre, as the addon wrote it.
+    pub genre: String,
+    pub items: Vec<ItemView>,
+}
+
+/// Which catalogue to ask for more of an item's genre: the first catalogue of
+/// the same type, on an enabled addon, that can be narrowed to that genre.
+/// Tried for each of the item's genres in order. `None` when no addon can.
+///
+/// This is not a recommendation. The addon is asked for its own catalogue,
+/// narrowed the way the addon says it can be; nothing here decides what is
+/// "like" anything (madde 9).
+pub fn more_request(
+    session: &Session,
+    content_type: &str,
+    id: &str,
+) -> Result<Option<(String, PageRequest)>, String> {
+    let Some(meta) = session.meta.as_ref().filter(|meta| meta.id == id) else {
+        return Ok(None);
+    };
+    for genre in &meta.genres {
+        for addon in session.registry.enabled() {
+            for catalog in &addon.manifest.catalogs {
+                if catalog.content_type != content_type {
+                    continue;
+                }
+                let offers = catalog.extra.iter().any(|prop| {
+                    prop.name == "genre"
+                        && (prop.options.is_empty() || prop.options.iter().any(|g| g == genre))
+                });
+                // A catalogue that needs some other parameter first is not
+                // one this can ask.
+                let other_required = catalog
+                    .extra
+                    .iter()
+                    .any(|prop| prop.is_required && prop.name != "genre");
+                if !offers || other_required {
+                    continue;
+                }
+                let request = page_request(
+                    session,
+                    addon.id(),
+                    content_type,
+                    &catalog.id,
+                    0,
+                    None,
+                    Some(("genre".to_owned(), genre.clone())),
+                )?;
+                return Ok(Some((genre.clone(), request)));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Everything kept, in the order asked for: `recent` or `name`.
 ///
 /// The home screen's row shows the newest two dozen; this is the whole

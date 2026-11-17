@@ -342,6 +342,128 @@ pub async fn detail(state: State<'_, Shared>, content_type: String, id: String) 
     .await
 }
 
+/// More of the open title's genre, from an addon catalogue narrowed to it,
+/// without the title itself. `None` when no addon can narrow by genre.
+#[tauri::command]
+pub async fn more_like(
+    state: State<'_, Shared>,
+    content_type: String,
+    id: String,
+) -> Out<Option<view::MoreView>> {
+    let own = id.clone();
+    with_network(
+        &state,
+        move |session| view::more_request(session, &content_type, &id),
+        |request| {
+            request
+                .as_ref()
+                .map(|(_, request)| view::fetch_page(request))
+        },
+        move |session, request, answer| {
+            let (Some((genre, _)), Some(previews)) = (request, answer) else {
+                return Ok(None);
+            };
+            let previews: Vec<_> = previews?
+                .into_iter()
+                .filter(|preview| preview.id != own)
+                .collect();
+            Ok(Some(view::MoreView {
+                genre,
+                items: view::page_items(session, previews),
+            }))
+        },
+    )
+    .await
+}
+
+/// Play the open title's trailer.
+///
+/// Inside the window when mpv can: a direct file always, YouTube only when
+/// `yt-dlp` is there for mpv's ytdl hook to use. Otherwise the system's
+/// browser opens it -- the one place this program hands a link to something
+/// else, and only on a press, because a trailer button that does nothing
+/// without a tool most people do not have is a broken button. Answers
+/// `player` or `browser`.
+#[tauri::command]
+pub async fn trailer(state: State<'_, Shared>) -> Out<String> {
+    let shared = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || -> Out<String> {
+        let url = {
+            let session = shared
+                .lock()
+                .map_err(|_| "the host lost track of its own state".to_owned())?;
+            let meta = session
+                .meta
+                .as_ref()
+                .ok_or_else(|| session.text("ui.error.notrailer"))?;
+            meta.trailer_url()
+                .ok_or_else(|| session.text("ui.error.notrailer"))?
+        };
+        let youtube = url.contains("youtube.com/") || url.contains("youtu.be/");
+        if youtube && !has_ytdlp() {
+            open_in_browser(&url)?;
+            return Ok("browser".to_owned());
+        }
+        let ticket = shared
+            .lock()
+            .map_err(|_| "the host lost track of its own state".to_owned())?
+            .job
+            .lock()
+            .map(|mut job| job.begin())
+            .unwrap_or_default();
+        let search = subs::Search {
+            ticket,
+            subject: None,
+            filename: None,
+            video_hash: None,
+            size: None,
+            torrent: None,
+        };
+        launch(
+            &shared,
+            PlaybackSource::Url(url),
+            Vec::new(),
+            Vec::new(),
+            None,
+            search,
+            false,
+        )?;
+        Ok("player".to_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Whether `yt-dlp` is on the `PATH` or beside this program, where mpv's
+/// ytdl hook looks for it.
+fn has_ytdlp() -> bool {
+    let names = ["yt-dlp.exe", "yt-dlp"];
+    let beside = names
+        .iter()
+        .any(|name| crate::state::beside_exe(name).is_file());
+    beside
+        || std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path)
+                .any(|dir| names.iter().any(|name| dir.join(name).is_file()))
+        })
+}
+
+/// Hand a web address to the system's browser.
+fn open_in_browser(url: &str) -> Out<()> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("not a web address".to_owned());
+    }
+    #[cfg(windows)]
+    let result = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(url).spawn();
+    result.map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// The billboard on the home screen: one item's artwork and blurb, looked up
 /// without becoming the item the viewer is looking at.
 #[tauri::command]
