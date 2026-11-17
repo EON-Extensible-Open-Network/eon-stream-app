@@ -94,9 +94,40 @@ pub struct Job {
     /// is the stage it is known for, and the one a viewer waits on longest.
     pub progress: Option<f64>,
     pub error: Option<String>,
+    /// Which start this is. Every start takes a new number and so does every
+    /// cancel, so a worker that is still waiting on a swarm after the viewer
+    /// gave up can tell that nobody wants its result -- and does not open a
+    /// player over the page they went back to.
+    #[serde(skip)]
+    pub ticket: u64,
+    /// The info hash of the torrent this start is resolving, once known, so a
+    /// cancel can take it out of the engine and delete its pieces.
+    #[serde(skip)]
+    pub torrent: Option<String>,
 }
 
 impl Job {
+    /// A new start. Returns its ticket.
+    pub fn begin(&mut self) -> u64 {
+        self.ticket = self.ticket.wrapping_add(1);
+        self.torrent = None;
+        self.at("ui.job.starting", String::new());
+        self.ticket
+    }
+
+    /// Whether `ticket` is still the start someone is waiting for.
+    #[must_use]
+    pub fn wanted(&self, ticket: u64) -> bool {
+        self.ticket == ticket
+    }
+
+    /// Give up on the current start. Answers the torrent it was resolving.
+    pub fn cancel(&mut self) -> Option<String> {
+        self.ticket = self.ticket.wrapping_add(1);
+        self.done();
+        self.torrent.take()
+    }
+
     /// Say what is happening now.
     pub fn at(&mut self, stage: &str, detail: String) {
         self.active = true;
@@ -180,6 +211,11 @@ pub struct Session {
     /// plays HTTP streams.
     pub torrent: Option<Arc<TorrentEngine>>,
     pub job: JobHandle,
+    /// The info hash of the torrent the player is reading, so giving up on it
+    /// can delete what it fetched.
+    pub playing_torrent: Option<String>,
+    /// Subtitles found for what is playing, loaded or not.
+    pub subtitles: crate::subs::Found,
 }
 
 impl Session {
@@ -223,6 +259,8 @@ impl Session {
             last_seen: None,
             torrent: None,
             job: Arc::new(Mutex::new(Job::default())),
+            playing_torrent: None,
+            subtitles: crate::subs::Found::default(),
         }
     }
 

@@ -47,6 +47,7 @@ mod buffer;
 mod commands;
 mod http;
 mod state;
+mod subs;
 mod surface;
 mod torrents;
 mod view;
@@ -118,6 +119,7 @@ fn window(play: Option<String>) {
     let app = tauri::Builder::default()
         .manage(Arc::clone(&session))
         .setup(|app| {
+            surface::main_window(app.handle())?;
             surface::install(app.handle());
             Ok(())
         })
@@ -146,6 +148,11 @@ fn window(play: Option<String>) {
             commands::continue_remove,
             commands::play,
             commands::play_link,
+            commands::cancel,
+            commands::subtitles,
+            commands::subtitle_load,
+            commands::subtitle_file,
+            commands::subtitle_languages,
             commands::player,
             commands::tracks,
             commands::buffer_clear,
@@ -184,6 +191,7 @@ fn shutdown(session: &Shared) {
     if let Some(player) = session.player.take() {
         let _ = player.quit();
     }
+    subs::clear_folder();
     if let Some(engine) = session.torrent.take() {
         // A worker thread still resolving a torrent holds the other handle. It
         // is about to be killed with the process, and forcing the shutdown

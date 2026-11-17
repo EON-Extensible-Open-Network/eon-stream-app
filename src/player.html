@@ -28,9 +28,16 @@ headless build's prompt uses.
       <button id="back" class="control big" type="button" data-icon="arrowLeft" data-label="ui.player.back"></button>
     </header>
 
-    <div id="center" class="center" aria-hidden="true">
-      <div id="spinner" class="spinner" hidden></div>
-      <div id="flash" class="flash"></div>
+    <div id="center" class="center">
+      <!-- While the picture waits on the network: what it is waiting for, and
+           the way out. A start that never gets a frame used to leave nothing
+           to press but a back button that the next poll undid. -->
+      <div id="waiting" class="waiting" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="waiting-line" class="waiting-line" role="status"></p>
+        <button id="abandon" class="abandon" type="button" data-say="ui.player.abandon"></button>
+      </div>
+      <div id="flash" class="flash" aria-hidden="true"></div>
     </div>
 
     <footer class="bottom">
@@ -79,6 +86,11 @@ headless build's prompt uses.
       <div class="column">
         <h3 data-say="ui.player.subtitles"></h3>
         <ul id="sub-list"></ul>
+        <h4 class="found-title" data-say="ui.subs.found"></h4>
+        <p id="sub-note" class="sub-note" role="status"></p>
+        <ul id="sub-found" class="sub-found"></ul>
+        <button id="sub-file-open" class="sub-file" type="button" data-say="ui.subs.file"></button>
+        <input id="sub-file" type="file" accept=".srt,.ass,.ssa,.vtt" hidden />
       </div>
     </div>
 

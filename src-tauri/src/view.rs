@@ -974,16 +974,26 @@ pub fn status(session: &mut Session) -> StatusView {
             // Kept for when mpv closes itself at the end of the file: see
             // Session::last_seen.
             seen = position.map(|position| (position, duration));
+            let paused = running
+                .get_property("pause")
+                .map(|value| value == "true")
+                .unwrap_or_default();
+            // Waiting on the network: mpv says so once it has started and
+            // runs dry (`paused-for-cache`). Before the first frame it does
+            // not -- it is idle, not paused by anyone, and that is the wait a
+            // stalled torrent leaves someone staring at.
+            let buffering = running.is_buffering().unwrap_or_default()
+                || (!paused
+                    && running
+                        .get_property("core-idle")
+                        .is_ok_and(|value| value == "true"));
             player = PlayerView {
                 running: true,
                 title: session
                     .playing
                     .as_ref()
                     .map_or_else(String::new, |p| p.name.clone()),
-                paused: running
-                    .get_property("pause")
-                    .map(|value| value == "true")
-                    .unwrap_or_default(),
+                paused,
                 position,
                 duration,
                 position_clock: position.map(clock),
@@ -1001,7 +1011,7 @@ pub fn status(session: &mut Session) -> StatusView {
                     .get_property("speed")
                     .ok()
                     .and_then(|value| value.parse().ok()),
-                buffering: running.is_buffering().unwrap_or_default(),
+                buffering,
             };
         }
     }
@@ -1067,6 +1077,8 @@ pub fn about(session: &Session) -> AboutView {
             "eon-revocations.json",
             "eon-trust.json",
             "eon-torrents/",
+            "eon-subtitles/",
+            "eon-webview/",
         ]
         .iter()
         .map(|name| (*name).to_owned())

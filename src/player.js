@@ -60,6 +60,30 @@ function clear(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
+/** Bytes per second, as a person reads a download speed. */
+function bytes(n) {
+  const value = Number(n) || 0;
+  const units = ["B", "KB", "MB", "GB"];
+  let at = value;
+  let unit = 0;
+  while (at >= 1024 && unit < units.length - 1) {
+    at /= 1024;
+    unit += 1;
+  }
+  return `${at >= 10 || unit === 0 ? Math.round(at) : at.toFixed(1)} ${units[unit]}`;
+}
+
+/** Give up on this: stop the player, stop the torrent, delete what it
+ *  fetched. The host takes this page down. */
+async function abandon() {
+  $("abandon").disabled = true;
+  try {
+    await invoke("cancel");
+  } catch (error) {
+    $("abandon").disabled = false;
+  }
+}
+
 function clock(seconds) {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return "0:00";
   const whole = Math.max(0, Math.floor(seconds));
@@ -95,25 +119,41 @@ async function act(action, value = null) {
 
 // ---------------------------------------------------------------- awake/asleep
 
+/** Where subtitles sit: above the control bar while it is up, near the
+ *  bottom edge when it is not. In mpv's units, 720 to the picture's height. */
+const SUB_LOW = 34;
+const SUB_HIGH = 120;
+let SUB_AT = null;
+
+function placeSubtitles(margin) {
+  if (SUB_AT === margin) return;
+  SUB_AT = margin;
+  invoke("player", { action: "sub-margin", value: margin }).catch(() => {
+    SUB_AT = null;
+  });
+}
+
 function wake() {
   if (document.body.classList.contains("sleep")) {
     document.body.classList.remove("sleep");
     drawState();
   }
+  placeSubtitles(SUB_HIGH);
   clearTimeout(SLEEP_TIMER);
   SLEEP_TIMER = setTimeout(sleep, 3000);
 }
 
 function sleep() {
-  // Never while paused, scrubbing, or with a panel open: those are moments
-  // someone is looking at the controls.
-  const panelOpen = !$("tracks").hidden || !$("speed").hidden;
+  // Never while paused, scrubbing, waiting, or with a panel open: those are
+  // moments someone is looking at the controls.
+  const panelOpen = !$("tracks").hidden || !$("speed").hidden || !$("waiting").hidden;
   const hovering = document.querySelector(".bottom:hover, .top:hover");
   if (!STATE || STATE.paused || SCRUBBING || panelOpen || hovering) {
     SLEEP_TIMER = setTimeout(sleep, 3000);
     return;
   }
   document.body.classList.add("sleep");
+  placeSubtitles(SUB_LOW);
 }
 
 function flash(name) {
@@ -166,7 +206,21 @@ async function poll() {
     $("volume").value = String(Math.round(player.volume));
   }
 
-  if ($("spinner").hidden !== !player.buffering) $("spinner").hidden = !player.buffering;
+  // Waiting on the network: the spinner, what it is waiting on, and the way
+  // out. The controls stay up meanwhile -- someone watching a spinner is
+  // deciding whether to keep waiting.
+  const waiting = $("waiting");
+  if (waiting.hidden !== !player.buffering) waiting.hidden = !player.buffering;
+  if (player.buffering) {
+    wake();
+    const torrent = status.torrents && status.torrents[0];
+    put(
+      $("waiting-line"),
+      torrent && !torrent.finished
+        ? t("ui.player.peers", torrent.peers, bytes(torrent.down_bps))
+        : t("ui.player.waiting")
+    );
+  }
 
   // Nothing of the timeline is on screen while the controls are asleep, and
   // this page is laid over a moving picture: every change to it is a frame
@@ -258,6 +312,8 @@ function setupTimeline() {
 function closePanels() {
   $("tracks").hidden = true;
   $("speed").hidden = true;
+  clearTimeout(FOUND_TIMER);
+  FOUND_ALL = false;
 }
 
 async function openTracks() {
@@ -297,6 +353,99 @@ async function openTracks() {
   fill($("audio-list"), "audio", false);
   fill($("sub-list"), "sub", true);
   panel.hidden = false;
+  await fillFound();
+}
+
+/** How many found subtitles are listed before "show all". */
+const FOUND_SHOWN = 8;
+let FOUND_ALL = false;
+let FOUND_TIMER = 0;
+
+/** The subtitles the host found -- inside the torrent, from subtitle
+ *  addons, or chosen from a file -- that are not loaded yet. One press
+ *  loads one and switches it on. */
+async function fillFound(note = null) {
+  clearTimeout(FOUND_TIMER);
+  const list = $("sub-found");
+  let found;
+  try {
+    found = await invoke("subtitles");
+  } catch (error) {
+    found = { searching: false, addons: 0, offers: [] };
+  }
+  if ($("tracks").hidden) return;
+  clear(list);
+  const waiting = found.offers.filter((offer) => !offer.loaded);
+  const shown = FOUND_ALL ? waiting : waiting.slice(0, FOUND_SHOWN);
+  for (const offer of shown) {
+    const name = offer.language ? languageName(offer.language) : t("ui.sources.unknown");
+    const origin = offer.kind === "torrent" ? t("ui.subs.intorrent", offer.origin) : offer.origin;
+    const button = el("button", { attrs: { type: "button", title: `${name} — ${origin}` } }, [
+      icon("plus"),
+      el("span", {}, [el("span", { text: name }), el("span", { className: "origin", text: origin })]),
+    ]);
+    button.addEventListener("click", async () => {
+      put($("sub-note"), t("ui.subs.loading"));
+      try {
+        await invoke("subtitle_load", { index: offer.index });
+        await refreshTracks();
+      } catch (error) {
+        await fillFound(t("ui.subs.failed", String(error)));
+      }
+    });
+    list.appendChild(el("li", {}, [button]));
+  }
+  if (!FOUND_ALL && waiting.length > FOUND_SHOWN) {
+    list.appendChild(
+      el("li", {}, [
+        el("button", {
+          className: "more",
+          text: t("ui.subs.more", waiting.length),
+          attrs: { type: "button" },
+          onClick: () => {
+            FOUND_ALL = true;
+            fillFound();
+          },
+        }),
+      ])
+    );
+  }
+  let text = note;
+  if (!text) {
+    if (found.searching) text = t("ui.subs.searching");
+    else if (found.addons === 0) text = t("ui.subs.noaddon");
+    else if (waiting.length === 0) text = t("ui.subs.none");
+    else text = "";
+  }
+  put($("sub-note"), text);
+  // Still looking: look again shortly, while the menu is open.
+  if (found.searching) FOUND_TIMER = setTimeout(() => refreshTracks(), 1500);
+}
+
+/** Redraw an open track menu in place. */
+async function refreshTracks() {
+  const panel = $("tracks");
+  if (panel.hidden) return;
+  panel.hidden = true;
+  await openTracks();
+}
+
+/** A subtitle file from this computer. Read here and sent as bytes: this
+ *  page has no file paths to give, and should not. */
+async function loadFile(file) {
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    put($("sub-note"), t("ui.subs.failed", t("ui.subs.toobig")));
+    return;
+  }
+  put($("sub-note"), t("ui.subs.loading"));
+  try {
+    const buffer = await file.arrayBuffer();
+    await invoke("subtitle_file", { name: file.name, bytes: Array.from(new Uint8Array(buffer)) });
+    await refreshTracks();
+  } catch (error) {
+    put($("sub-note"), t("ui.subs.failed", String(error)));
+  }
 }
 
 function openSpeed() {
@@ -363,6 +512,8 @@ function onKey(event) {
   } else if (key === "escape") {
     if (!$("tracks").hidden || !$("speed").hidden) closePanels();
     else if (window.innerHeight >= screen.height - 1) act("fullscreen");
+    // Leaving something that never started is giving up on it.
+    else if (!$("waiting").hidden) abandon();
     else act("stop");
   }
 }
@@ -382,6 +533,13 @@ async function boot() {
 
   $("back").addEventListener("click", () => act("stop"));
   $("stop").addEventListener("click", () => act("stop"));
+  $("abandon").addEventListener("click", abandon);
+  $("sub-file-open").addEventListener("click", () => $("sub-file").click());
+  $("sub-file").addEventListener("change", () => {
+    const input = $("sub-file");
+    loadFile(input.files && input.files[0]);
+    input.value = "";
+  });
   $("toggle").addEventListener("click", toggle);
   $("fullscreen").addEventListener("click", () => act("fullscreen"));
   $("mute").addEventListener("click", () => act("mute"));

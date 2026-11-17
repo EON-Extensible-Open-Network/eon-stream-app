@@ -44,7 +44,7 @@ use tauri::State;
 
 use crate::{
     state::{NowPlaying, Session},
-    torrents,
+    subs, torrents,
     view::{
         self, AboutView, AddonView, DetailView, RowView, SearchView, SettingsView, SourcesView,
         TrackView,
@@ -379,6 +379,27 @@ pub async fn sources(
     .await
 }
 
+/// Which languages the viewer's subtitle addons have subtitles in for one
+/// item, and how many of each.
+///
+/// Asked beside the source list rather than inside it, so a slow subtitle
+/// addon never holds up the sources. A subtitle addon matches on the film,
+/// not on the release, so this holds whichever source is picked.
+#[tauri::command]
+pub async fn subtitle_languages(
+    state: State<'_, Shared>,
+    content_type: String,
+    id: String,
+) -> Out<subs::LanguagesView> {
+    with_network(
+        &state,
+        |session| Ok(view::Net::of(session)),
+        move |net| subs::languages(net, &content_type, &id),
+        |_, _, found| Ok(found),
+    )
+    .await
+}
+
 // ------------------------------------------------------------------- keeping
 
 #[tauri::command]
@@ -447,7 +468,7 @@ pub async fn play(state: State<'_, Shared>, index: usize, file: Option<usize>) -
     tauri::async_runtime::spawn_blocking(move || -> Out<()> {
         // Everything that needs the lock happens first and the lock is then
         // dropped, because what follows can take minutes.
-        let (ranked, playing, engine) = {
+        let (ranked, playing, engine, job, ticket) = {
             let mut session = shared
                 .lock()
                 .map_err(|_| "the host lost track of its own state".to_owned())?;
@@ -462,10 +483,9 @@ pub async fn play(state: State<'_, Shared>, index: usize, file: Option<usize>) -
             } else {
                 None
             };
-            if let Ok(mut job) = session.job.lock() {
-                job.at("ui.job.starting", String::new());
-            }
-            (ranked, playing, engine)
+            let job = Arc::clone(&session.job);
+            let ticket = job.lock().map(|mut job| job.begin()).unwrap_or_default();
+            (ranked, playing, engine, job, ticket)
         };
 
         let subtitles: Vec<String> = ranked
@@ -474,21 +494,33 @@ pub async fn play(state: State<'_, Shared>, index: usize, file: Option<usize>) -
             .iter()
             .map(|s| s.url.clone())
             .collect();
+        let hints = ranked.stream.subtitle_match();
+        let mut search = subs::Search {
+            ticket,
+            subject: playing
+                .as_ref()
+                .map(|p| (p.content_type.clone(), p.id.clone())),
+            filename: hints.filename.map(ToOwned::to_owned),
+            video_hash: hints.video_hash.map(ToOwned::to_owned),
+            size: hints.video_size.or_else(|| ranked.stream.size_bytes()),
+            torrent: None,
+        };
 
         let (source, headers) = match (torrents::source_of(&ranked.stream), engine) {
             (Some(torrent), Some(engine)) => {
-                let job = {
-                    let session = shared
-                        .lock()
-                        .map_err(|_| "the host lost track of its own state".to_owned())?;
-                    Arc::clone(&session.job)
-                };
-                match torrents::resolve(&engine, &torrent, file, &job) {
+                match torrents::resolve(&engine, &torrent, file, &job, ticket) {
                     // Subtitles that came with the stream still apply; the
                     // headers do not, because the player is reading from
                     // loopback rather than from the addon's host.
-                    Ok((source, _index)) => (source, Vec::new()),
-                    Err(message) => return finish_with_error(&shared, message),
+                    Ok(resolved) => {
+                        if let Ok(file) = resolved.handle.file(resolved.index) {
+                            search.filename = Some(file.name().to_owned());
+                            search.size = Some(file.length);
+                        }
+                        search.torrent = Some((engine, resolved.handle));
+                        (resolved.source, Vec::new())
+                    }
+                    Err(message) => return finish_with_error(&shared, ticket, message),
                 }
             }
             _ => match to_playback_source(&ranked.stream) {
@@ -508,15 +540,103 @@ pub async fn play(state: State<'_, Shared>, index: usize, file: Option<usize>) -
                             .map_err(|_| "the host lost track of its own state".to_owned())?;
                         session.text(&message)
                     };
-                    return finish_with_error(&shared, message);
+                    return finish_with_error(&shared, ticket, message);
                 }
             },
         };
 
-        launch(&shared, source, headers, subtitles, playing)
+        launch(&shared, source, headers, subtitles, playing, search)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Give up on what is starting or playing, and on what it fetched.
+///
+/// The button under the spinner. Whatever stage the start is in -- waiting for
+/// metadata, filling the prebuffer, or a player that opened and never got a
+/// frame -- this ends it: the worker is told nobody wants its result, mpv is
+/// closed, and the torrent is taken out of the engine with its pieces deleted.
+/// A stalled start is usually a swarm that is not there, and keeping what it
+/// managed to fetch would be keeping the cause.
+///
+/// Where it got to is still written down: a film that stalled after forty
+/// minutes resumes at forty minutes from another source.
+#[tauri::command]
+pub async fn cancel(state: State<'_, Shared>) -> Out<()> {
+    let shared = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || -> Out<()> {
+        let (engine, hashes) = {
+            let mut session = shared
+                .lock()
+                .map_err(|_| "the host lost track of its own state".to_owned())?;
+            let mut hashes: Vec<String> = session
+                .job
+                .lock()
+                .ok()
+                .and_then(|mut job| job.cancel())
+                .into_iter()
+                .collect();
+            session.remember_position();
+            if let Some(player) = session.player.take() {
+                let _ = player.quit();
+            }
+            session.playing = None;
+            session.last_seen = None;
+            if let Some(hash) = session.playing_torrent.take() {
+                if !hashes.contains(&hash) {
+                    hashes.push(hash);
+                }
+            }
+            // Ends the subtitle search for this playback too: its ticket no
+            // longer matches.
+            session.subtitles = subs::Found::default();
+            (session.torrent.clone(), hashes)
+        };
+        crate::surface::close_controls();
+        subs::clear_folder();
+        if let Some(engine) = engine {
+            for hash in hashes {
+                if let Ok(handle) = engine.get(&hash) {
+                    let _ = engine.remove(&handle, true);
+                }
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// What subtitles were found for what is playing.
+#[tauri::command]
+pub async fn subtitles(state: State<'_, Shared>) -> Out<subs::SubtitlesView> {
+    with_session(&state, |session| Ok(subs::view(session))).await
+}
+
+/// Load one of the subtitles found, by its place in the list, and switch it
+/// on.
+#[tauri::command]
+pub async fn subtitle_load(state: State<'_, Shared>, index: usize) -> Out<()> {
+    let shared = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let ticket = shared
+            .lock()
+            .map(|session| session.subtitles.ticket)
+            .map_err(|_| "the host lost track of its own state".to_owned())?;
+        subs::load_one(&shared, ticket, index, true)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// A subtitle file the viewer picked, as its name and its bytes.
+#[tauri::command]
+pub async fn subtitle_file(state: State<'_, Shared>, name: String, bytes: Vec<u8>) -> Out<()> {
+    with_session(&state, move |session| {
+        subs::add_file(session, &name, &bytes)
+    })
+    .await
 }
 
 /// Play a magnet link, an info hash, a URL or a file path, with no addon
@@ -548,6 +668,24 @@ pub fn play_link_now(shared: &Shared, link: &str) -> Out<()> {
         return Err("nothing to play".to_owned());
     }
 
+    let ticket = shared
+        .lock()
+        .map_err(|_| "the host lost track of its own state".to_owned())?
+        .job
+        .lock()
+        .map(|mut job| job.begin())
+        .unwrap_or_default();
+    // No addon is involved, so there is nothing to ask a subtitle addon
+    // about; what ships inside the torrent is still found.
+    let mut search = subs::Search {
+        ticket,
+        subject: None,
+        filename: None,
+        video_hash: None,
+        size: None,
+        torrent: None,
+    };
+
     if let Some(request) = torrents::request_from_argument(&link) {
         let (engine, job) = {
             let mut session = shared
@@ -560,9 +698,19 @@ pub fn play_link_now(shared: &Shared, link: &str) -> Out<()> {
             request,
             file_index: None,
         };
-        return match torrents::resolve(&engine, &source, None, &job) {
-            Ok((source, _index)) => launch(shared, source, Vec::new(), Vec::new(), None),
-            Err(message) => finish_with_error(shared, message),
+        return match torrents::resolve(&engine, &source, None, &job, ticket) {
+            Ok(resolved) => {
+                search.torrent = Some((engine, resolved.handle));
+                launch(
+                    shared,
+                    resolved.source,
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    search,
+                )
+            }
+            Err(message) => finish_with_error(shared, ticket, message),
         };
     }
 
@@ -572,7 +720,7 @@ pub fn play_link_now(shared: &Shared, link: &str) -> Out<()> {
     } else {
         PlaybackSource::Url(link)
     };
-    launch(shared, source, Vec::new(), Vec::new(), None)
+    launch(shared, source, Vec::new(), Vec::new(), None, search)
 }
 
 /// Pause, seek, stop, and the rest of what a player does.
@@ -616,6 +764,12 @@ pub async fn player(state: State<'_, Shared>, action: String, value: Option<f64>
             "seek-to" => player.seek(amount, SeekMode::Absolute),
             "volume" => player.set_volume(amount),
             "speed" => player.set_speed(amount),
+            // How far above the bottom subtitles sit, in mpv's scaled pixels
+            // (720 to the picture's height). The controls raise them while
+            // they are up, so a line of dialogue is never under the bar.
+            "sub-margin" => {
+                player.set_property("sub-margin-y", &amount.clamp(0.0, 300.0).to_string())
+            }
             "subtitles-on" => player.set_subtitles_visible(true),
             "subtitles-off" => player.set_subtitles_visible(false),
             "mute" => {
@@ -832,7 +986,9 @@ fn launch(
     headers: Vec<(String, String)>,
     subtitles: Vec<String>,
     playing: Option<NowPlaying>,
+    search: subs::Search,
 ) -> Out<()> {
+    let ticket = search.ticket;
     // Before the lock: on a `--play` start this can wait for the window to be
     // built, and nothing else should wait on that.
     let mut extra_args = crate::surface::mpv_arguments();
@@ -840,6 +996,18 @@ fn launch(
     let mut session = shared
         .lock()
         .map_err(|_| "the host lost track of its own state".to_owned())?;
+
+    // Checked under the lock `cancel` takes as well, so a cancel lands either
+    // wholly before this -- and nothing starts -- or wholly after, and closes
+    // what did.
+    let wanted = session
+        .job
+        .lock()
+        .map(|job| job.wanted(ticket))
+        .unwrap_or(true);
+    if !wanted {
+        return Ok(());
+    }
 
     session.remember_position();
     if let Some(existing) = session.player.take() {
@@ -855,6 +1023,13 @@ fn launch(
     // picture stutters. `auto-safe` only picks decoders mpv considers safe
     // and falls back to software on its own when none fits.
     extra_args.push("--hwdec=auto-safe".to_owned());
+    // Subtitles that read over a bright sky as well as a dark room: mpv's
+    // default outline is thin enough to vanish against white.
+    extra_args.push("--sub-border-size=2.6".to_owned());
+    extra_args.push("--sub-shadow-offset=1.2".to_owned());
+    extra_args.push("--sub-shadow-color=#99000000".to_owned());
+    // Embedded subtitle and audio tracks in the viewer's languages.
+    extra_args.extend(subs::mpv_arguments(&session));
 
     let resume = playing
         .as_ref()
@@ -878,6 +1053,11 @@ fn launch(
         Ok(started) => {
             session.player = Some(started);
             session.playing = playing;
+            session.playing_torrent = search
+                .torrent
+                .as_ref()
+                .map(|(_, handle)| handle.info_hash().to_owned());
+            subs::reset(&mut session, ticket);
             if let Ok(mut job) = session.job.lock() {
                 job.done();
             }
@@ -886,6 +1066,8 @@ fn launch(
             // waits for the window's own thread.
             drop(session);
             crate::surface::open_controls();
+            let shared = Arc::clone(shared);
+            std::thread::spawn(move || subs::find(&shared, search));
             Ok(())
         }
         Err(e) => {
@@ -903,11 +1085,21 @@ fn launch(
 /// Both, because the two are read at different moments: the job survives the
 /// command returning, and the returned error is what the button that was just
 /// pressed shows.
-fn finish_with_error(shared: &Shared, message: String) -> Out<()> {
+///
+/// A start the viewer cancelled reports nothing: they asked for it to stop,
+/// and a toast saying it stopped -- or that the swarm it was waiting on timed
+/// out a minute later -- would be news about something they left.
+fn finish_with_error(shared: &Shared, ticket: u64, message: String) -> Out<()> {
     if let Ok(session) = shared.lock() {
         if let Ok(mut job) = session.job.lock() {
+            if !job.wanted(ticket) {
+                return Ok(());
+            }
             job.failed(message.clone());
         }
+    }
+    if message == torrents::CANCELLED {
+        return Ok(());
     }
     Err(message)
 }

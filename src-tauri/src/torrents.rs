@@ -29,7 +29,8 @@ use std::time::{Duration, Instant};
 
 use eon_stream_core::{ranking::format_size, types::StreamSource, Stream};
 use eon_stream_engine::{
-    default_download_dir, PlaybackSource, TorrentEngine, TorrentOptions, TorrentRequest,
+    default_download_dir, PlaybackSource, TorrentEngine, TorrentHandle, TorrentOptions,
+    TorrentRequest,
 };
 use serde::Serialize;
 
@@ -114,26 +115,61 @@ pub fn options_from(
     })
 }
 
+/// What resolving a torrent produced.
+pub struct Resolved {
+    pub source: PlaybackSource,
+    /// The torrent, with its file list: subtitles shipped beside the video
+    /// are found in it.
+    pub handle: TorrentHandle,
+    /// Which file inside it is playing.
+    pub index: usize,
+}
+
+/// The answer a worker gives when the viewer gave up while it waited.
+///
+/// Not an error and not shown: the person pressed the button that asked for
+/// exactly this.
+pub const CANCELLED: &str = "ui.job.cancelled";
+
 /// Resolve a torrent source all the way to a URL mpv can open.
 ///
-/// Reports into `job` as it goes. Returns the file index alongside the source
-/// so the caller can say which file inside the torrent is playing.
+/// Reports into `job` as it goes, and checks between every stage -- and four
+/// times a second during the prebuffer -- that `ticket` is still the start
+/// someone is waiting for. When it is not, the torrent is taken out of the
+/// engine with its pieces and [`CANCELLED`] comes back.
 ///
 /// # Errors
 ///
 /// As text: a torrent whose metadata never arrived, a torrent with no video in
-/// it, or a prebuffer that timed out.
+/// it, a prebuffer that timed out, or [`CANCELLED`].
 pub fn resolve(
     engine: &TorrentEngine,
     source: &TorrentSource,
     explicit_file: Option<usize>,
     job: &JobHandle,
-) -> Result<(PlaybackSource, usize), String> {
-    report(job, "ui.job.metadata", String::new());
+    ticket: u64,
+) -> Result<Resolved, String> {
+    let wanted = || job.lock().map(|job| job.wanted(ticket)).unwrap_or(true);
+    if let Ok(mut job) = job.lock() {
+        if !job.wanted(ticket) {
+            return Err(CANCELLED.to_owned());
+        }
+        job.at("ui.job.metadata", String::new());
+        // Written down before the wait, so a cancel during it knows what to
+        // take out of the engine.
+        job.torrent = source.request.info_hash().ok();
+    }
 
     let handle = engine.add(&source.request).map_err(|e| e.to_string())?;
+    let give_up = |handle: &TorrentHandle| {
+        let _ = engine.remove(handle, true);
+        Err(CANCELLED.to_owned())
+    };
+    if !wanted() {
+        return give_up(&handle);
+    }
     let name = handle.name().unwrap_or("").to_owned();
-    report(job, "ui.job.metadata", name);
+    report(job, ticket, "ui.job.metadata", name);
 
     // Which file, and why, is the engine's rule: it owns the file list and it
     // is where that decision can be tested (eon-stream-engine::torrent).
@@ -141,13 +177,13 @@ pub fn resolve(
         .choose_file(explicit_file, source.file_index)
         .map_err(|e| e.to_string())?;
     let index = file.index;
-    report(job, "ui.job.picked", file.name().to_owned());
+    report(job, ticket, "ui.job.picked", file.name().to_owned());
 
     let mut last = Instant::now();
     engine
         .wait_for_prebuffer(&handle, index, PREBUFFER_TIMEOUT, |have, want| {
-            // Four times a second would redraw a progress bar faster than it
-            // can be read and would lock the job mutex for nothing.
+            // Twice a second: faster would redraw a progress bar quicker than
+            // it can be read, and lock the job mutex for nothing.
             if last.elapsed() >= Duration::from_millis(500) {
                 last = Instant::now();
                 #[allow(clippy::cast_precision_loss)]
@@ -157,6 +193,9 @@ pub fn resolve(
                     have as f64 / want as f64
                 };
                 if let Ok(mut job) = job.lock() {
+                    if !job.wanted(ticket) {
+                        return false;
+                    }
                     job.at_fraction(
                         "ui.job.buffering",
                         format!("{} / {}", format_size(have), format_size(want)),
@@ -164,14 +203,21 @@ pub fn resolve(
                     );
                 }
             }
-            true
+            wanted()
         })
         .map_err(|e| e.to_string())?;
+    if !wanted() {
+        return give_up(&handle);
+    }
 
     let url = engine
         .stream_url(&handle, index)
         .map_err(|e| e.to_string())?;
-    Ok((PlaybackSource::Url(url), index))
+    Ok(Resolved {
+        source: PlaybackSource::Url(url),
+        handle,
+        index,
+    })
 }
 
 /// Write a stage into the job without caring whether anyone is reading it.
@@ -179,9 +225,13 @@ pub fn resolve(
 /// A poisoned mutex here would mean a worker panicked while holding it. The
 /// honest response is to carry on resolving the torrent rather than to take
 /// the window down over a progress label, so the result is discarded.
-fn report(job: &JobHandle, stage: &str, detail: String) {
+fn report(job: &JobHandle, ticket: u64, stage: &str, detail: String) {
     if let Ok(mut job) = job.lock() {
-        job.at(stage, detail);
+        // A cancelled start says nothing more: the screen it would write to
+        // has gone.
+        if job.wanted(ticket) {
+            job.at(stage, detail);
+        }
     }
 }
 

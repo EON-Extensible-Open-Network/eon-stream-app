@@ -59,6 +59,49 @@ pub const CONTROLS: &str = "player";
 /// The label of the window everything lives in.
 const MAIN: &str = "main";
 
+/// Where the webview keeps its profile: beside the executable, like
+/// everything else this program writes.
+///
+/// WebView2's default is `%LOCALAPPDATA%\<identifier>\EBWebView`, which is
+/// where every build from `v0.14` to `v0.17` put it -- the one thing this
+/// program wrote outside its own folder, unnoticed because the check for it
+/// deleted the files this program names, and this one it never named. Both
+/// webviews must use the same folder: WebView2 runs one browser process per
+/// profile, and two in one window is two of everything.
+fn profile() -> std::path::PathBuf {
+    crate::state::beside_exe("eon-webview")
+}
+
+/// Build the window. In code rather than `tauri.conf.json`, because the
+/// profile folder is only known at run time.
+///
+/// # Errors
+///
+/// Whatever Tauri reports when the window cannot be built.
+pub fn main_window(app: &AppHandle) -> tauri::Result<()> {
+    #[allow(unused_mut)]
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
+            .title("EON Stream")
+            .inner_size(1280.0, 820.0)
+            .min_inner_size(880.0, 560.0)
+            .resizable(true)
+            .center()
+            .theme(Some(tauri::Theme::Dark))
+            .data_directory(profile());
+    // A debug build can be driven over the DevTools protocol, which is how
+    // the window is tested without anyone clicking it -- and without SendKeys.
+    // The release build ignores the variable: it is not a switch a viewer's
+    // environment should be able to flip.
+    #[cfg(debug_assertions)]
+    if let Ok(extra) = std::env::var("EON_WEBVIEW_ARGS") {
+        builder = builder.additional_browser_args(&format!(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection {extra}"
+        ));
+    }
+    builder.build().map(|_| ())
+}
+
 /// Remember the application. Called once, from `setup`.
 pub fn install(app: &AppHandle) {
     let _ = APP.set(app.clone());
@@ -145,10 +188,18 @@ pub fn open_controls() {
                 .map(|scale| size.to_logical::<f64>(scale))
         })
         .unwrap_or(tauri::LogicalSize::new(1280.0, 820.0));
-    let builder = WebviewBuilder::new(CONTROLS, WebviewUrl::App("player.html".into()))
+    #[allow(unused_mut)]
+    let mut builder = WebviewBuilder::new(CONTROLS, WebviewUrl::App("player.html".into()))
+        .data_directory(profile())
         .transparent(true)
         .auto_resize()
         .focused(true);
+    #[cfg(debug_assertions)]
+    if let Ok(extra) = std::env::var("EON_WEBVIEW_ARGS") {
+        builder = builder.additional_browser_args(&format!(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection {extra}"
+        ));
+    }
     match window.add_child(builder, tauri::LogicalPosition::new(0.0, 0.0), size) {
         Ok(webview) => {
             OPEN.store(true, Ordering::SeqCst);

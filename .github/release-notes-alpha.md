@@ -119,9 +119,12 @@ recommendation.)
 Everything beside the executable, and nothing anywhere else — both binaries
 share these files: `eon-addons.json`, `eon-history.json`, `eon-library.json`,
 `eon-settings.json`, `eon-modules.json`, `eon-revocations.json`,
-`eon-modules/` for installed module content, and
-`eon-torrents/` for downloaded pieces — which are discarded on exit unless you
-set `torrent.keepFiles`. Delete any of them to start that part over.
+`eon-modules/` for installed module content, `eon-torrents/` for downloaded
+pieces (discarded on exit unless you set `torrent.keepFiles`), `eon-subtitles/`
+for subtitles fetched for what is playing (emptied at every start and on exit),
+and `eon-webview/`, the window's browser profile. Builds up to `v0.17` put that
+profile in `%LOCALAPPDATA%\org.eonstream.stream` instead; that folder can be
+deleted. Delete any of them to start that part over.
 
 Nothing leaves your machine except requests to addons you added yourself, the
 torrent swarms you asked for, and — only when you type `update` — a check

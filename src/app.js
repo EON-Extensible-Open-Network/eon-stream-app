@@ -1049,9 +1049,29 @@ async function loadSources(contentType, id, name) {
   bar.appendChild(reset);
   bar.appendChild(el("label", { className: "sort" }, [el("span", { text: t("ui.sources.sort") }), sort]));
   const list = el("div");
+  // What the viewer's subtitle addons have for this, asked beside the list
+  // rather than inside it: a subtitle addon matches the film, not the
+  // release, so this holds for whichever source is picked.
+  const subsLine = el("p", { className: "subs-line" });
+  container.appendChild(subsLine);
   container.appendChild(filters);
   container.appendChild(bar);
   container.appendChild(list);
+  invoke("subtitle_languages", { contentType, id })
+    .then((found) => {
+      if (token !== SOURCES_TOKEN) return;
+      if (found.addons === 0) subsLine.textContent = t("ui.sources.subsnoaddon");
+      else if (found.languages.length === 0) subsLine.textContent = t("ui.sources.subsnone");
+      else
+        subsLine.textContent = t(
+          "ui.sources.subsfound",
+          found.languages
+            .slice(0, 8)
+            .map(([code, n]) => `${languageName(code)} (${n})`)
+            .join(", ")
+        );
+    })
+    .catch(() => subsLine.remove());
 
   // Three filters, always all three, in this order: quality, the language
   // it is dubbed in, the language of its subtitles. Each offers only values
@@ -1812,12 +1832,25 @@ async function boot() {
   });
 
   document.getElementById("empty-add").addEventListener("click", () => loadAddons());
-  document.getElementById("loading-back").addEventListener("click", hideLoading);
+  // Both ways out of the loading screen give up on the start for real. The
+  // back button used to only hide the screen, and the next poll -- seeing the
+  // start still running -- put it straight back.
+  const giveUp = async () => {
+    hideLoading();
+    try {
+      await invoke("cancel");
+    } catch (error) {
+      toast(error);
+    }
+  };
+  document.getElementById("loading-back").addEventListener("click", giveUp);
+  document.getElementById("loading-cancel").addEventListener("click", giveUp);
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       if (!document.getElementById("menu").hidden) closeMenu(true);
       else if (!dialog.hidden) closeDialog();
+      else if (!document.getElementById("loading").hidden) document.getElementById("loading-cancel").click();
       else if (!document.getElementById("view-detail").hidden) go(LAST);
     } else if (event.key === "/" && document.activeElement === document.body) {
       event.preventDefault();

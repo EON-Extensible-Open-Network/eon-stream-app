@@ -15,6 +15,61 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.18] — 2026-11-18 — a way out, and subtitles that are found
+
+### Fixed
+- **A start that never got going could not be left.** The loading screen's back button
+  only hid the screen; the torrent kept resolving, the next status poll saw it still
+  running and put the screen straight back, and when the prebuffer finally filled the
+  player opened over whatever page the viewer had gone to. Leaving now gives up on the
+  start for real: every start carries a ticket, cancelling invalidates it, and a worker
+  still waiting on a swarm checks it between stages and four times a second during the
+  prebuffer. A cancelled start reports nothing — not even the metadata timeout that
+  arrives a minute later.
+- **The window wrote outside its folder.** WebView2 kept the window's browser profile in
+  `%LOCALAPPDATA%\org.eonstream.stream`, in every build since `v0.14` — the one thing this
+  program wrote anywhere but beside the executable, missed because the check deleted the
+  files this program names and this one it never named. The profile is now
+  `eon-webview/` beside the executable, and the self-test lists it. The old folder can be
+  deleted.
+- **The spinner only appeared once playback had started and run dry.** A player that
+  opened and never got its first frame — the usual shape of a dead swarm — showed a still
+  black picture with nothing to say it was waiting. mpv idling with nobody having paused
+  it now counts as waiting too.
+
+### Added
+- **"Cancel and go back", under the spinner.** While the picture waits on the network the
+  player shows the peers and speed it is waiting on and one button: it closes mpv, takes
+  the torrent out of the engine and deletes its pieces, and returns to the page it was
+  started from. The loading screen has the same button, and Escape does the same on both.
+  Where playback got to is still written down.
+- **Subtitles are found, not hoped for.** Almost no source says which subtitles it has,
+  so the filter over what sources say rarely helped. Every start now looks in three
+  places, on its own thread, after the picture is up:
+  - inside the video — mpv is told the viewer's languages (`--slang`, and `--alang` from
+    the preferred audio languages) so an embedded track in one of them is picked;
+  - beside the video in the same torrent — `.srt`, `.ass`, `.ssa` and `.vtt` files,
+    served over loopback like the film, with the language read from the file name;
+  - from the viewer's subtitle addons, told the file's name, size and hash where known.
+    None is built in (madde 9); with none installed, the menu says how to get one.
+
+  The best two per wanted language are loaded and the first is switched on — unless a
+  subtitle is already on, or the film is already being heard in that language. The
+  wanted languages are `playback.subtitleLanguages`, or the interface's language when it
+  is not English.
+- **A subtitle menu that lists what was found** but not loaded, with where it came from;
+  one press loads and switches on one. **Load from a file…** takes a subtitle from this
+  computer.
+- **The sources page says which subtitle languages your addons have** for the title, and
+  that they work with whichever source is picked.
+
+### Changed
+- Subtitles move up above the control bar while the controls are showing and back down
+  when they fade, and have a heavier outline so they read over a bright picture.
+- Fetched subtitles are written to `eon-subtitles/` beside the executable and handed to
+  mpv as files: mpv loads a subtitle URL on its playback thread, so a slow server would
+  have frozen the picture. The folder is emptied at every start and on exit.
+
 ## [v0.17] — 2026-11-17 — less waiting, better filters
 
 ### Fixed

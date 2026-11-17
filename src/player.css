@@ -301,6 +301,47 @@ body.sleep .top .control {
   pointer-events: none;
 }
 
+/* The spinner, what it is waiting on, and the way out, stacked in the
+   middle. Only the button takes the pointer: a click anywhere else is still
+   a click on the picture. */
+.center > * {
+  grid-area: 1 / 1;
+}
+
+.waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+}
+
+.waiting-line {
+  margin: 0;
+  min-height: 1.4em;
+  color: var(--text);
+  font-size: 15px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.abandon {
+  pointer-events: auto;
+  min-height: 44px;
+  padding: 0 22px;
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
+  background: rgba(10, 12, 18, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+.abandon:hover,
+.abandon:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
 .spinner {
   width: 72px;
   height: 72px;
@@ -380,8 +421,61 @@ body.sleep .top .control {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 46vh;
+  max-height: 30vh;
   overflow-y: auto;
+}
+
+.tracks {
+  max-height: calc(100vh - 170px);
+  overflow-y: auto;
+}
+
+.found-title {
+  margin: 16px 0 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.sub-note {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+  max-width: 260px;
+}
+
+.sub-note:empty {
+  display: none;
+}
+
+.sub-found li button .icon {
+  visibility: visible;
+  color: var(--muted);
+}
+
+.sub-found .origin {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 210px;
+}
+
+.sub-file {
+  margin-top: 10px;
+  min-height: 36px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.sub-file:hover,
+.sub-file:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .tracks li button {
