@@ -41,8 +41,24 @@ let LAST = "home";
 /** The detail currently open. */
 let DETAIL = null;
 
-/** What the source list holds, and how it is narrowed. */
-let SOURCES = { all: [], quality: null, audio: null, subs: null, subject: null };
+/** What the source list holds, how it is narrowed, and in what order. */
+let SOURCES = sourceState([], null, "");
+
+/** Which source list is the newest asked for: an older one that answers late
+ *  is dropped rather than drawn over it. */
+let SOURCES_TOKEN = 0;
+
+function sourceState(all, subject, name) {
+  return {
+    all,
+    subject,
+    name,
+    // Several values may be picked in one filter, and a source shows when it
+    // has any of them; between filters, it has to satisfy each.
+    pick: { quality: new Set(), audio: new Set(), subs: new Set() },
+    sort: "best",
+  };
+}
 
 /** What is being started, for the loading screen. */
 let STARTING = null;
@@ -193,7 +209,7 @@ function fold(text) {
  *  is attached before the source is set: the only order that catches a URL
  *  that fails immediately. */
 function image(src, className, fallback) {
-  const img = el("img", { className, attrs: { alt: "", loading: "lazy", draggable: "false" } });
+  const img = el("img", { className, attrs: { alt: "", loading: "lazy", decoding: "async", draggable: "false" } });
   img.addEventListener("error", () => {
     img.remove();
     if (fallback) fallback();
@@ -222,7 +238,8 @@ function go(target) {
     FILTER = target;
     showView("home");
     renderHome();
-  } else if (target === "library") openLibrary();
+  } else if (target === "new") openNew();
+  else if (target === "library") openLibrary();
   else if (target === "addons") loadAddons();
   else if (target === "settings") loadSettings();
   else if (target === "search") showView("search");
@@ -251,8 +268,8 @@ function posterFor(item) {
   return poster;
 }
 
-/** One poster card. */
-function card(item) {
+/** One poster card, with a menu of `actions(item, holder)` when given. */
+function card(item, actions = null) {
   const poster = posterFor(item);
   if (item.episode_label) {
     poster.appendChild(el("span", { className: "badge", text: item.episode_label }));
@@ -269,7 +286,7 @@ function card(item) {
 
   const sub = item.resume_at ? t("ui.card.resume", item.resume_at) : item.year || "";
 
-  return el(
+  const button = el(
     "button",
     {
       className: "card",
@@ -279,6 +296,85 @@ function card(item) {
     },
     [poster, el("div", { className: "name", text: item.name }), el("div", { className: "sub", text: sub })]
   );
+  if (!actions) return button;
+
+  // A card with a menu: the menu button sits beside the card's own button
+  // rather than inside it, because a button inside a button is not one a
+  // keyboard or a screen reader can reach.
+  const holder = el("div", { className: "card-holder" }, [button]);
+  const more = iconButton("more", t("ui.card.more", item.name), () => openMenu(more, actions(item, holder)), "card-more");
+  more.setAttribute("aria-haspopup", "menu");
+  holder.appendChild(more);
+  return holder;
+}
+
+// --------------------------------------------------------------------- menu
+
+/** A small menu under the button that opened it. Closes on a choice, on
+ *  Escape, on a click anywhere else, and when the page moves under it. */
+function openMenu(anchor, items) {
+  const menu = document.getElementById("menu");
+  clear(menu);
+  for (const item of items) {
+    const entry = el("button", {
+      className: "menu-item",
+      attrs: { type: "button", role: "menuitem" },
+      onClick: () => {
+        closeMenu();
+        item.run();
+      },
+    });
+    entry.appendChild(icon(item.icon));
+    entry.appendChild(el("span", { text: item.label }));
+    menu.appendChild(entry);
+  }
+  menu.hidden = false;
+  const box = anchor.getBoundingClientRect();
+  const width = menu.offsetWidth;
+  menu.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, box.right - width))}px`;
+  menu.style.top = `${Math.min(window.innerHeight - menu.offsetHeight - 8, box.bottom + 6)}px`;
+  closeMenu.anchor = anchor;
+  anchor.setAttribute("aria-expanded", "true");
+  const first = menu.querySelector("button");
+  if (first) first.focus();
+}
+
+function closeMenu(returnFocus = false) {
+  const menu = document.getElementById("menu");
+  if (menu.hidden) return;
+  menu.hidden = true;
+  const anchor = closeMenu.anchor;
+  closeMenu.anchor = null;
+  if (anchor) {
+    anchor.setAttribute("aria-expanded", "false");
+    if (returnFocus && anchor.isConnected) anchor.focus();
+  }
+}
+
+/** What a continue-watching card offers. */
+function continueActions(row) {
+  return (item, holder) => [
+    { icon: "info", label: t("ui.action.details"), run: () => openDetail(item.content_type, item.id) },
+    {
+      icon: "close",
+      label: t("ui.continue.remove"),
+      run: async () => {
+        try {
+          await ask("continue_remove", { contentType: item.content_type, id: item.id });
+        } catch (error) {
+          return;
+        }
+        row.items = row.items.filter((other) => other !== item);
+        const section = holder.closest(".row");
+        holder.remove();
+        if (row.items.length === 0) {
+          ROWS = ROWS.filter((other) => other !== row);
+          if (section) section.remove();
+        }
+        toast(t("ui.continue.removed"));
+      },
+    },
+  ];
 }
 
 // --------------------------------------------------------------------- home
@@ -342,6 +438,7 @@ function loadMore(row) {
     catalogId: row.catalog_id,
     skip,
     query: null,
+    extra: row.extra || null,
   })
     .then((items) => {
       // Catalogues page by a fixed size the addon picks; an empty or repeated
@@ -389,7 +486,9 @@ function slider(row) {
   prev.appendChild(el("span", {}, [icon("chevronLeft")]));
   next.appendChild(el("span", {}, [icon("chevronRight")]));
 
-  const kind = [typeName(row.content_type), row.addon_name].filter(Boolean).join(", ");
+  const kind = [typeName(row.content_type), row.extra ? row.extra[1] : null, row.addon_name]
+    .filter(Boolean)
+    .join(", ");
   const section = el("section", { className: "row", attrs: { "aria-label": row.title } }, [
     el("div", { className: "row-head" }, [
       el("h3", { text: row.title }),
@@ -398,6 +497,8 @@ function slider(row) {
     ]),
     el("div", { className: "slider" }, [prev, track, next]),
   ]);
+
+  const actions = row.kind === "continue" ? continueActions(row) : null;
 
   const fill = () => {
     clear(track);
@@ -415,7 +516,9 @@ function slider(row) {
       return;
     }
     if (row.loaded) track.removeAttribute("aria-busy");
-    for (const item of row.items) track.appendChild(card(item));
+    const cards = document.createDocumentFragment();
+    for (const item of row.items) cards.appendChild(card(item, actions));
+    track.appendChild(cards);
     update();
   };
 
@@ -438,7 +541,7 @@ function slider(row) {
       const before = row.items.length;
       loadMore(row).then(() => {
         if (row.items.length !== before) {
-          for (const item of row.items.slice(before)) track.appendChild(card(item));
+          for (const item of row.items.slice(before)) track.appendChild(card(item, actions));
         }
         update();
       });
@@ -456,13 +559,31 @@ function slider(row) {
   dragToScroll(track, () => update());
   new ResizeObserver(() => update()).observe(track);
 
-  if (row.loaded) {
-    fill();
-  } else {
-    fill();
-    ensureRow(row).then(fill);
-  }
+  fill();
+  // A row asks its addon for its first page when it comes near the screen,
+  // not when the page is drawn: twenty rows answering at once is twenty
+  // requests and several hundred posters decoding for a screen that shows
+  // three of them.
+  if (!row.loaded) whenNear(section, () => ensureRow(row).then(fill));
   return section;
+}
+
+/** Run `then` once, when `node` comes within a screen of the viewport. */
+function whenNear(node, then) {
+  if (!("IntersectionObserver" in window)) {
+    then();
+    return;
+  }
+  const watcher = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        watcher.disconnect();
+        then();
+      }
+    },
+    { rootMargin: "100% 0px" }
+  );
+  watcher.observe(node);
 }
 
 /** Let a mouse grab a row and throw it. Touch and pens already scroll it
@@ -613,6 +734,30 @@ async function openLibrary() {
   for (const item of library.items) grid.appendChild(card(item));
 }
 
+/** New & popular: the catalogues that call themselves trending, then the
+ *  ones that call themselves new. Which those are is the addons' word, read
+ *  from their catalogue ids and names on the host -- this program does not
+ *  pick titles itself. */
+async function openNew() {
+  showView("new");
+  const container = document.getElementById("new-rows");
+  clear(container);
+  if (ROWS.length === 0) await loadRows();
+  const sections = [
+    ["trending", "ui.new.trending"],
+    ["new", "ui.new.recent"],
+  ];
+  let any = false;
+  for (const [role, title] of sections) {
+    const rows = ROWS.filter((row) => row.role === role);
+    if (rows.length === 0) continue;
+    any = true;
+    container.appendChild(el("h2", { className: "section-title new-heading", text: t(title) }));
+    for (const row of rows) container.appendChild(slider(row));
+  }
+  document.getElementById("new-empty").hidden = any;
+}
+
 // ------------------------------------------------------------------- detail
 
 async function openDetail(contentType, id) {
@@ -723,12 +868,11 @@ async function playFromDetail() {
       DETAIL.episodes.find((episode) => episode.progress && !episode.finished) ||
       DETAIL.episodes.find((episode) => !episode.finished && (episode.season || 0) > 0) ||
       DETAIL.episodes[0];
-    const label = episodeLabel(next);
-    await loadSources("series", next.id, `${DETAIL.name} · ${label}`);
+    await loadSources("series", next.id, episodeName(DETAIL, next));
   } else if (SOURCES.subject !== DETAIL.id) {
     await loadSources(DETAIL.content_type, DETAIL.id, DETAIL.name);
   }
-  const shown = filteredSources();
+  const shown = sortedSources(filteredSources());
   if (shown.length === 0) {
     toast(t("ui.detail.nosources"));
     return;
@@ -756,7 +900,7 @@ async function playBest(contentType, id, name, art) {
     toast(t("ui.detail.nosources"));
     return;
   }
-  SOURCES = { all: result.sources, quality: null, audio: null, subs: null, subject: id, name };
+  SOURCES = sourceState(result.sources, id, name);
   play(result.sources[0].index, name, art);
 }
 
@@ -764,6 +908,15 @@ function episodeLabel(episode) {
   return episode.season !== null && episode.episode !== null
     ? `S${String(episode.season).padStart(2, "0")}E${String(episode.episode).padStart(2, "0")}`
     : episode.title;
+}
+
+/** What the player and the loading screen call an episode: the series, the
+ *  number, and the episode's own name when there is one. */
+function episodeName(detail, episode) {
+  const label = episodeLabel(episode);
+  return episode.named && episode.title !== label
+    ? `${detail.name} · ${label} · ${episode.title}`
+    : `${detail.name} · ${label}`;
 }
 
 function renderEpisodes(container, detail) {
@@ -793,15 +946,18 @@ function renderEpisodes(container, detail) {
           onClick: () => {
             for (const other of list.children) other.removeAttribute("aria-current");
             row.setAttribute("aria-current", "true");
-            loadSources("series", episode.id, `${detail.name} · ${label}`);
+            loadSources("series", episode.id, episodeName(detail, episode));
           },
         },
         [
           el("span", { className: "no", text: episode.episode !== null ? episode.episode : "" }),
           thumb,
+          // The episode's own name when the addon gives one; otherwise the
+          // season and episode number, once rather than twice.
           el("span", { className: "grow" }, [
-            el("div", { className: "title", text: episode.title || label, title: episode.title }),
-            el("div", { className: "when", text: label }),
+            el("div", { className: "title", text: episode.named ? episode.title : label, title: episode.title }),
+            episode.named ? el("div", { className: "when", text: label }) : null,
+            episode.overview ? el("p", { className: "synopsis", text: episode.overview }) : null,
           ]),
           el("span", {
             className: "when",
@@ -839,20 +995,27 @@ function renderEpisodes(container, detail) {
 async function loadSources(contentType, id, name) {
   const container = document.getElementById("sources");
   if (!container) return;
+  const token = (SOURCES_TOKEN += 1);
   clear(container);
   container.appendChild(el("h2", { className: "section-title", text: t("ui.detail.sources") }));
   const waiting = el("div", { className: "spinner", text: t("ui.loading") });
   container.appendChild(waiting);
   if (contentType === "series") container.scrollIntoView({ behavior: "smooth", block: "start" });
 
+  // Not through `ask`: a list that was overtaken by a newer one is not an
+  // error worth a toast, it is simply not drawn.
   let result;
   try {
-    result = await ask("sources", { contentType, id, name });
+    result = await invoke("sources", { contentType, id, name });
   } catch (error) {
-    waiting.remove();
+    if (token === SOURCES_TOKEN) {
+      waiting.remove();
+      toast(error);
+    }
     return;
   }
-  SOURCES = { all: result.sources, quality: null, audio: null, subs: null, subject: id, name };
+  if (token !== SOURCES_TOKEN) return;
+  SOURCES = sourceState(result.sources, id, name);
   waiting.remove();
 
   if (result.failures.length) toast(result.failures.join("\n"));
@@ -861,106 +1024,200 @@ async function loadSources(contentType, id, name) {
     return;
   }
 
+  // Best first, as the host ranked the buckets.
+  QUALITY_ORDER = result.qualities.map(([label]) => label);
+
   const filters = el("div", { className: "filters" });
-  const count = el("div", { className: "count-line" });
+  const bar = el("div", { className: "count-line" });
+  const count = el("span", { className: "grow" });
+  const reset = el("button", {
+    className: "text-button",
+    attrs: { type: "button" },
+    text: t("ui.sources.clear"),
+    onClick: () => {
+      for (const set of Object.values(SOURCES.pick)) set.clear();
+      update();
+    },
+  });
+  const sort = el("select", { className: "sort-select", attrs: { "aria-label": t("ui.sources.sort") } });
+  for (const [value, key] of SORTS) sort.appendChild(el("option", { text: t(key), attrs: { value } }));
+  sort.addEventListener("change", () => {
+    SOURCES.sort = sort.value;
+    drawList();
+  });
+  bar.appendChild(count);
+  bar.appendChild(reset);
+  bar.appendChild(el("label", { className: "sort" }, [el("span", { text: t("ui.sources.sort") }), sort]));
   const list = el("div");
   container.appendChild(filters);
-  container.appendChild(count);
+  container.appendChild(bar);
   container.appendChild(list);
 
-  // Three ways to narrow the list: quality, the language it is dubbed in, and
-  // the language of the subtitles that come with it. Each offers only what
-  // the list actually holds, with how many of each, so no filter can be set
-  // to something that empties the list on its own.
-  // The host files sources that state no quality under "—"; a person reads
-  // that as nothing, so the chip says what it means.
-  const qualities = result.qualities.map(([label, n]) => [label, label === "—" ? t("ui.sources.unknown") : label, n]);
-  const audio = tally(SOURCES.all, (source) => source.languages);
-  const subs = tally(SOURCES.all, (source) =>
-    source.subtitle_languages.length ? source.subtitle_languages : source.has_subtitles ? ["?"] : []
-  );
+  // Three filters, always all three, in this order: quality, the language
+  // it is dubbed in, the language of its subtitles. Each offers only values
+  // the list holds. The number on a value is how many sources would show if
+  // it were picked, given what the *other* filters already say -- so it
+  // changes as they do, and a value that would empty the list reads 0 and
+  // cannot be pressed.
+  const chipsOf = {};
+  const group = (facet, title, options) => {
+    const chips = el("div", { className: "chips", attrs: { role: "group", "aria-label": title } });
+    const any = filterChip(t("ui.sources.any"), () => {
+      SOURCES.pick[facet].clear();
+      update();
+    });
+    any.dataset.any = "true";
+    chips.appendChild(any);
+    for (const [value, label] of options) {
+      const chip = filterChip(label, () => {
+        const picked = SOURCES.pick[facet];
+        if (picked.has(value)) picked.delete(value);
+        else picked.add(value);
+        update();
+      });
+      chip.dataset.value = value;
+      chips.appendChild(chip);
+    }
+    chipsOf[facet] = chips;
+    filters.appendChild(el("div", { className: "filter" }, [el("span", { className: "filter-name", text: title }), chips]));
+  };
 
-  const draw = () => {
+  const quality = QUALITY_ORDER.map((label) => [label, label === "—" ? t("ui.sources.unknown") : label]);
+  const audio = valuesOf("audio").map((code) => [code, code === "" ? t("ui.sources.unknown") : languageName(code)]);
+  const subs = valuesOf("subs").map((code) => [
+    code,
+    code === "?" ? t("ui.sources.subs") : code === "" ? t("ui.sources.unknown") : languageName(code),
+  ]);
+  group("quality", t("ui.sources.quality"), quality);
+  group("audio", t("ui.sources.audio"), audio);
+  group("subs", t("ui.sources.subtitles"), subs);
+
+  const drawList = () => {
     clear(list);
-    const shown = filteredSources();
+    const shown = sortedSources(filteredSources());
     count.textContent = t("ui.sources.shown", shown.length, SOURCES.all.length);
     if (shown.length === 0) {
       list.appendChild(el("div", { className: "spinner", text: t("ui.sources.nomatch") }));
     }
-    for (const source of shown.slice(0, 200)) list.appendChild(sourceRow(source));
+    // Built off-document and attached once: one layout for the whole list
+    // rather than one per row.
+    const rows = document.createDocumentFragment();
+    for (const source of shown.slice(0, 200)) rows.appendChild(sourceRow(source));
+    list.appendChild(rows);
   };
 
-  const group = (name, key, options) => {
-    if (options.length === 0) return;
-    const chips = el("div", { className: "chips" });
-    const all = [[null, t("ui.sources.any"), SOURCES.all.length], ...options];
-    for (const [value, label, n] of all) {
-      const chip = el("button", {
-        className: "chip",
-        attrs: { type: "button", "aria-pressed": String(SOURCES[key] === value) },
-        onClick: () => {
-          SOURCES[key] = value;
-          for (const other of chips.children) other.setAttribute("aria-pressed", "false");
-          chip.setAttribute("aria-pressed", "true");
-          draw();
-        },
-      });
-      chip.appendChild(document.createTextNode(label));
-      chip.appendChild(el("small", { text: n }));
-      chips.appendChild(chip);
+  function update() {
+    for (const facet of Object.keys(FACETS)) {
+      const picked = SOURCES.pick[facet];
+      // Every source the other filters let through: what this filter's
+      // numbers are counted over.
+      const base = SOURCES.all.filter((source) => passes(source, facet));
+      const counts = new Map();
+      for (const source of base) {
+        for (const value of FACETS[facet](source)) counts.set(value, (counts.get(value) || 0) + 1);
+      }
+      for (const chip of chipsOf[facet].children) {
+        if (chip.dataset.any) {
+          setChip(chip, picked.size === 0, base.length, false);
+        } else {
+          const n = counts.get(chip.dataset.value) || 0;
+          const on = picked.has(chip.dataset.value);
+          setChip(chip, on, n, n === 0 && !on);
+        }
+      }
     }
-    filters.appendChild(el("div", { className: "filter" }, [el("span", { className: "filter-name", text: name }), chips]));
-  };
+    reset.hidden = Object.values(SOURCES.pick).every((set) => set.size === 0);
+    drawList();
+  }
 
-  group(t("ui.sources.quality"), "quality", qualities);
-  group(
-    t("ui.sources.audio"),
-    "audio",
-    audio.map(([code, n]) => [code, code === "" ? t("ui.sources.unknown") : languageName(code), n])
-  );
-  group(
-    t("ui.sources.subtitles"),
-    "subs",
-    subs.map(([code, n]) => [
-      code,
-      code === "?" ? t("ui.sources.unknown") : code === "" ? t("ui.sources.nosubs") : languageName(code),
-      n,
-    ])
-  );
-  draw();
+  update();
 }
 
-/** How many sources carry each value, most common first. Sources that state
- *  nothing are counted under "", so "not stated" is a choice too. */
-function tally(sources, valuesOf) {
+/** The orders a source list can be put in. "Best match" is the host's
+ *  ranking against the viewer's preferences, and the default. */
+const SORTS = [
+  ["best", "ui.sort.best"],
+  ["quality", "ui.sort.quality"],
+  ["seeders", "ui.sort.seeders"],
+  ["largest", "ui.sort.largest"],
+  ["smallest", "ui.sort.smallest"],
+];
+
+/** Quality buckets, best first, as the host ranked them. */
+let QUALITY_ORDER = [];
+
+/** What each filter reads off a source. A source that states nothing for a
+ *  filter is filed under "" -- "not stated" is a value someone can pick --
+ *  and one that says it has subtitles without saying in what under "?". */
+const FACETS = {
+  quality: (source) => [source.quality],
+  audio: (source) => (source.languages.length ? source.languages : [""]),
+  subs: (source) =>
+    source.subtitle_languages.length ? source.subtitle_languages : source.has_subtitles ? ["?"] : [""],
+};
+
+function filterChip(label, onClick) {
+  const chip = el("button", { className: "chip", attrs: { type: "button", "aria-pressed": "false" }, onClick });
+  chip.appendChild(document.createTextNode(label));
+  chip.appendChild(el("small"));
+  return chip;
+}
+
+function setChip(chip, on, n, off) {
+  chip.setAttribute("aria-pressed", String(on));
+  chip.disabled = off;
+  chip.lastChild.textContent = String(n);
+}
+
+/** Every value a filter can take over the whole list, most common first and
+ *  the vague ones last. */
+function valuesOf(facet) {
   const counts = new Map();
-  for (const source of sources) {
-    const values = valuesOf(source);
-    for (const value of values.length ? values : [""]) counts.set(value, (counts.get(value) || 0) + 1);
+  for (const source of SOURCES.all) {
+    for (const value of FACETS[facet](source)) counts.set(value, (counts.get(value) || 0) + 1);
   }
+  const rank = (value) => (value === "" ? 2 : value === "?" ? 1 : 0);
   return [...counts.entries()]
-    .filter(([value]) => value !== "" || counts.size > 1)
-    .sort((a, b) => (a[0] === "" ? 1 : b[0] === "" ? -1 : b[1] - a[1]));
+    .sort((a, b) => rank(a[0]) - rank(b[0]) || b[1] - a[1])
+    .map(([value]) => value);
+}
+
+/** Whether a source gets through every filter -- except `skip`, when one is
+ *  being counted. Within one filter, any picked value will do. */
+function passes(source, skip = null) {
+  for (const facet of Object.keys(FACETS)) {
+    if (facet === skip) continue;
+    const picked = SOURCES.pick[facet];
+    if (picked.size === 0) continue;
+    if (!FACETS[facet](source).some((value) => picked.has(value))) return false;
+  }
+  return true;
 }
 
 function filteredSources() {
-  return SOURCES.all.filter((source) => {
-    if (SOURCES.quality !== null && source.quality !== SOURCES.quality) return false;
-    if (SOURCES.audio !== null) {
-      if (SOURCES.audio === "" ? source.languages.length > 0 : !source.languages.includes(SOURCES.audio)) {
-        return false;
-      }
-    }
-    if (SOURCES.subs !== null) {
-      if (SOURCES.subs === "?") {
-        if (!(source.has_subtitles && source.subtitle_languages.length === 0)) return false;
-      } else if (SOURCES.subs === "") {
-        if (source.has_subtitles) return false;
-      } else if (!source.subtitle_languages.includes(SOURCES.subs)) {
-        return false;
-      }
-    }
-    return true;
+  return SOURCES.all.filter((source) => passes(source));
+}
+
+/** In the chosen order. Ties, and sources that do not state what is sorted
+ *  on, keep the host's ranking -- so the best match is always next. */
+function sortedSources(sources) {
+  const missingLast = (value, direction) =>
+    value === null || value === undefined ? Infinity : direction * value;
+  const key = {
+    best: () => 0,
+    quality: (source) => {
+      const at = QUALITY_ORDER.indexOf(source.quality);
+      return at === -1 ? Infinity : at;
+    },
+    seeders: (source) => missingLast(source.seeders, -1),
+    largest: (source) => missingLast(source.size_bytes, -1),
+    smallest: (source) => missingLast(source.size_bytes, 1),
+  }[SOURCES.sort || "best"];
+  return [...sources].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    if (ka !== kb) return ka < kb ? -1 : 1;
+    return a.index - b.index;
   });
 }
 
@@ -1428,11 +1685,18 @@ function bufferBox(size) {
 // ------------------------------------------------------------------ polling
 
 async function poll() {
+  // One question at a time. A status that takes longer than the interval --
+  // the host busy with mpv, say -- must not queue up a second and a third
+  // behind it.
+  if (poll.busy) return;
+  poll.busy = true;
   let status;
   try {
     status = await invoke("status");
   } catch (error) {
     return;
+  } finally {
+    poll.busy = false;
   }
 
   // The loading screen follows the job. Once mpv is up, the player's own
@@ -1552,7 +1816,8 @@ async function boot() {
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
-      if (!dialog.hidden) closeDialog();
+      if (!document.getElementById("menu").hidden) closeMenu(true);
+      else if (!dialog.hidden) closeDialog();
       else if (!document.getElementById("view-detail").hidden) go(LAST);
     } else if (event.key === "/" && document.activeElement === document.body) {
       event.preventDefault();
@@ -1561,10 +1826,29 @@ async function boot() {
     }
   });
 
+  // A click anywhere else, Escape, or the page moving closes a menu.
+  document.addEventListener("pointerdown", (event) => {
+    if (!event.target.closest("#menu") && !event.target.closest(".card-more")) closeMenu();
+  });
+  window.addEventListener("resize", () => closeMenu());
+  document.addEventListener("scroll", () => closeMenu(), { capture: true, passive: true });
+
   showView("home");
   await loadRows();
   await poll();
-  setInterval(poll, 1000);
+  // Every second while something is starting, so the loading screen moves;
+  // every few seconds otherwise, which is only there to notice a playback
+  // started from somewhere else. While the player covers this page it is
+  // hidden, and the player's own webview asks.
+  const tick = () => {
+    const busy = STARTING !== null || !document.getElementById("loading").hidden;
+    const wait = busy ? 1000 : document.hidden ? 5000 : 3000;
+    setTimeout(async () => {
+      await poll();
+      tick();
+    }, wait);
+  };
+  tick();
 }
 
 boot();

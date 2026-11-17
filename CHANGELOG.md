@@ -15,6 +15,52 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.17] — 2026-11-17 — less waiting, better filters
+
+### Fixed
+- **Source filter counts now take the other filters into account.** The number on a
+  value is how many sources would show if it were picked, given what the other filters
+  already say. Before, picking English on a title with 44 4K sources and 3 English ones
+  still said "4K 44", and picking 4K then listed nothing. A value that would empty the
+  list now reads 0 and cannot be pressed.
+- **Episode names.** Cinemeta and most addons write an episode's title as `name`, which
+  was not read, so every episode showed only SxxEyy. Names and synopses show now; an
+  episode without one keeps its season and episode number.
+- **Catalogues that need a parameter** — Cinemeta's "New" needs a year — are asked with
+  the first value the addon lists, instead of being drawn as a row that only showed an
+  error. One that needs a value nobody lists is left off the screen.
+
+### Added
+- **Several values per filter.** Within one filter a source shows when it has any of the
+  picked values (English *or* Turkish); between filters it has to satisfy each. The
+  subtitle filter is always shown, below quality and audio. "Clear filters" resets them.
+- **Sorting sources**: best match (the ranking, and the default), highest quality, most
+  seeders, largest first, smallest first.
+- **New & popular**: the catalogues that call themselves trending, then the ones that call
+  themselves new. Chosen from the addons' own catalogue ids and names; this program still
+  picks no titles itself.
+- **Taking something off Continue watching**, from a menu on the card. For a series it
+  removes every unfinished episode, so the previous one does not take its place; what was
+  finished stays watched.
+
+### Changed — performance
+- Requests to addons no longer hold the session lock while they wait. One slow addon used
+  to hold up every other row, the billboard, and the status poll behind the loading
+  screen and the player's controls.
+- mpv decodes on the graphics card where that is known to work (`--hwdec=auto-safe`). It
+  runs with `--no-config`, so its default applied: decoding on the processor, which a 4K
+  HEVC release saturates on a laptop while the torrent engine hashes on the same cores.
+- Rows ask for their first page when they come near the screen, and rows off screen are
+  not laid out or painted. Posters decode off the main thread. The blurred backdrop
+  behind every card's badge and the resting shadow under every poster are gone; both were
+  repainted as a row scrolled.
+- The player's controls are not redrawn while they are hidden, and once faded they are
+  taken out of the picture rather than left transparent over it. Neither webview queues a
+  second status question behind a slow one, and the catalogue asks less often when
+  nothing is starting.
+- A source list asked for while an older one is still coming is the one that counts: an
+  index read off one list can no longer be played from another.
+
 ## [v0.16] — 2026-11-17 — the picture is in the window
 
 The window now looks like a place to watch things, and the video plays in it.

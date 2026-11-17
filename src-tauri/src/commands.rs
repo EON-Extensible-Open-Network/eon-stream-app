@@ -20,8 +20,12 @@
 //! ## Nothing here blocks the window
 //!
 //! Every command fetches over the network or talks to mpv, so every command is
-//! `async` and does its work on a blocking thread with the session lock held
-//! only for as long as the work takes. The one exception is playing a torrent,
+//! `async` and does its work on a blocking thread. A command that waits on an
+//! addon does not hold the session lock while it waits: it copies out what the
+//! request needs, asks with nothing locked, and locks again to fold the answer
+//! in (`with_network`). Before v0.17 the lock was held for the whole request,
+//! and one slow addon answering one row held up the whole window. The one
+//! exception to answering only when done is playing a torrent,
 //! which waits on strangers: it returns as soon as the work is *started* and
 //! reports through [`crate::state::Job`], which the interface polls. A command
 //! that held the lock for three minutes would freeze every other command,
@@ -66,6 +70,41 @@ where
             .lock()
             .map_err(|_| "the host lost track of its own state".to_owned())?;
         work(&mut session)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Run something that waits on addons, without the session lock held while
+/// it waits.
+///
+/// `prepare` copies out what the request needs and `finish` folds the answer
+/// back in, each with the session locked for as long as that takes; `fetch`
+/// is the request, with nothing locked. See [`view::Net`] for why.
+async fn with_network<N, R, T, P, F, B>(
+    state: &State<'_, Shared>,
+    prepare: P,
+    fetch: F,
+    finish: B,
+) -> Out<T>
+where
+    P: FnOnce(&mut Session) -> Out<N> + Send + 'static,
+    F: FnOnce(&N) -> R + Send + 'static,
+    B: FnOnce(&mut Session, N, R) -> Out<T> + Send + 'static,
+    N: Send + 'static,
+    R: Send + 'static,
+    T: Send + 'static,
+{
+    let shared = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let lost = || "the host lost track of its own state".to_owned();
+        let request = {
+            let mut session = shared.lock().map_err(|_| lost())?;
+            prepare(&mut session)?
+        };
+        let answer = fetch(&request);
+        let mut session = shared.lock().map_err(|_| lost())?;
+        finish(&mut session, request, answer)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -259,30 +298,47 @@ pub async fn row_items(
     catalog_id: String,
     skip: usize,
     query: Option<String>,
+    extra: Option<(String, String)>,
 ) -> Out<Vec<view::ItemView>> {
-    with_session(&state, move |session| {
-        view::row_items(
-            session,
-            &addon_id,
-            &content_type,
-            &catalog_id,
-            skip,
-            query.as_deref(),
-        )
-    })
+    with_network(
+        &state,
+        move |session| {
+            view::page_request(
+                session,
+                &addon_id,
+                &content_type,
+                &catalog_id,
+                skip,
+                query.as_deref(),
+                extra,
+            )
+        },
+        view::fetch_page,
+        |session, _, previews| previews.map(|previews| view::page_items(session, previews)),
+    )
     .await
 }
 
 #[tauri::command]
 pub async fn search(state: State<'_, Shared>, query: String) -> Out<SearchView> {
-    with_session(&state, move |session| view::search(session, &query)).await
+    with_network(
+        &state,
+        move |session| view::search_request(session, &query),
+        view::search_fetch,
+        |session, _, found| Ok(view::search_view(session, found)),
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn detail(state: State<'_, Shared>, content_type: String, id: String) -> Out<DetailView> {
-    with_session(&state, move |session| {
-        view::detail(session, &content_type, &id)
-    })
+    let (ct, item) = (content_type.clone(), id.clone());
+    with_network(
+        &state,
+        |session| Ok(view::Net::of(session)),
+        move |net| view::fetch_meta(net, &ct, &item),
+        move |session, _, fetched| view::detail(session, &content_type, &id, fetched),
+    )
     .await
 }
 
@@ -294,9 +350,13 @@ pub async fn feature(
     content_type: String,
     id: String,
 ) -> Out<DetailView> {
-    with_session(&state, move |session| {
-        view::feature(session, &content_type, &id)
-    })
+    let (ct, item) = (content_type.clone(), id.clone());
+    with_network(
+        &state,
+        |session| Ok(view::Net::of(session)),
+        move |net| view::fetch_meta(net, &ct, &item),
+        move |session, _, fetched| view::feature(session, &content_type, &id, fetched),
+    )
     .await
 }
 
@@ -307,9 +367,15 @@ pub async fn sources(
     id: String,
     name: String,
 ) -> Out<SourcesView> {
-    with_session(&state, move |session| {
-        view::sources(session, &content_type, &id, &name)
-    })
+    let (ct, item) = (content_type.clone(), id.clone());
+    with_network(
+        &state,
+        view::sources_request,
+        move |(net, _)| view::fetch_sources(net, &ct, &item),
+        move |session, (_, request), merged| {
+            view::sources(session, &content_type, &id, &name, &merged, request)
+        },
+    )
     .await
 }
 
@@ -347,6 +413,23 @@ pub async fn history_forget(
         let forgotten = session.history.forget(&content_type, &id);
         session.save_history();
         Ok(forgotten)
+    })
+    .await
+}
+
+/// Take something off "continue watching". What was finished stays watched.
+#[tauri::command]
+pub async fn continue_remove(
+    state: State<'_, Shared>,
+    content_type: String,
+    id: String,
+) -> Out<usize> {
+    with_session(&state, move |session| {
+        let removed = session.history.stop_continuing(&content_type, &id);
+        if removed > 0 {
+            session.save_history();
+        }
+        Ok(removed)
     })
     .await
 }
@@ -765,6 +848,13 @@ fn launch(
 
     // The volume the viewer set, rather than mpv's own default of 100.
     extra_args.push(format!("--volume={}", session.settings.playback.volume));
+    // Decode on the graphics card where that is known to work. The player
+    // runs with `--no-config`, so mpv's own default applies, and that default
+    // is the processor: a 4K HEVC release then takes a laptop's CPU whole,
+    // while the torrent engine is hashing pieces on the same cores, and the
+    // picture stutters. `auto-safe` only picks decoders mpv considers safe
+    // and falls back to software on its own when none fits.
+    extra_args.push("--hwdec=auto-safe".to_owned());
 
     let resume = playing
         .as_ref()

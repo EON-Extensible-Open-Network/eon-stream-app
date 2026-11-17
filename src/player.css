@@ -108,6 +108,11 @@ body.sleep .top,
 body.sleep .bottom {
   opacity: 0;
   pointer-events: none;
+  /* Hidden once faded, not just transparent: a transparent layer over a
+     playing video is still one the compositor blends on every frame. Any key
+     wakes the controls before focus moves, so a keyboard still reaches them. */
+  visibility: hidden;
+  transition: opacity 0.35s var(--ease), visibility 0s linear 0.35s;
 }
 
 body.sleep .top .control {

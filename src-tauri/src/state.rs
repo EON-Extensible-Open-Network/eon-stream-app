@@ -154,6 +154,9 @@ pub struct Session {
 
     /// The last resolved source list, which `play <n>` indexes into.
     pub sources: Vec<RankedStream>,
+    /// How many source lists have been asked for. Only the newest may
+    /// replace `sources`: see `view::sources`.
+    pub sources_wanted: u64,
     /// What those sources are for: type, id, display name.
     pub subject: Option<(String, String, String)>,
     /// The last opened item, for episodes and for the next-episode step.
@@ -211,6 +214,7 @@ impl Session {
             settings,
             messages,
             sources: Vec::new(),
+            sources_wanted: 0,
             subject: None,
             meta: None,
             previews: Vec::new(),

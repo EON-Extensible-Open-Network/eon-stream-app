@@ -30,6 +30,10 @@ use std::{io::Read, time::Duration};
 use eon_stream_core::http::{HttpClient, HttpError, HttpResponse, Limits};
 
 /// A real HTTP client.
+///
+/// Cloning it is cheap and shares the connection pool: `ureq::Agent` is a
+/// handle. That is what lets a request run without the session lock held.
+#[derive(Clone)]
 pub struct Http {
     agent: ureq::Agent,
     limits: Limits,

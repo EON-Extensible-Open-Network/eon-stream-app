@@ -90,6 +90,11 @@ const ICONS = {
     ["path", { d: "M12 3.5v8" }],
     ["path", { d: "M7 6.5a7 7 0 1 0 10 0" }],
   ],
+  more: [
+    ["circle", { cx: 12, cy: 5.5, r: 1.6, fill: "currentColor", stroke: "none" }],
+    ["circle", { cx: 12, cy: 12, r: 1.6, fill: "currentColor", stroke: "none" }],
+    ["circle", { cx: 12, cy: 18.5, r: 1.6, fill: "currentColor", stroke: "none" }],
+  ],
   addon: [["path", { d: "M9.5 3.5h5v3a1.8 1.8 0 1 0 3.5 0v-3H20.5v6h-3a1.8 1.8 0 1 0 0 3.5h3v7.5h-17v-17z" }]],
 };
 

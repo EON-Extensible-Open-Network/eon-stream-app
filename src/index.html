@@ -36,6 +36,7 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
         <button class="link" type="button" data-go="home" data-say="ui.nav.home"></button>
         <button class="link" type="button" data-go="series" data-say="ui.nav.series"></button>
         <button class="link" type="button" data-go="movie" data-say="ui.nav.movies"></button>
+        <button class="link" type="button" data-go="new" data-say="ui.nav.new"></button>
         <button class="link" type="button" data-go="library" data-say="ui.nav.library"></button>
         <button class="link" type="button" data-go="addons" data-say="ui.nav.addons"></button>
       </nav>
@@ -77,6 +78,14 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
         <h2 id="search-heading" class="page-title"></h2>
         <p id="search-correction" class="correction" hidden></p>
         <div id="search-grid" class="grid"></div>
+      </section>
+
+      <section class="view" id="view-new" hidden>
+        <div class="new-page">
+          <h2 class="page-title" data-say="ui.nav.new"></h2>
+          <p id="new-empty" class="lede" data-say="ui.new.empty" hidden></p>
+        </div>
+        <div id="new-rows" class="rows"></div>
       </section>
 
       <section class="view page" id="view-library" hidden>
@@ -130,6 +139,8 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
         </div>
       </form>
     </div>
+
+    <div id="menu" class="menu" role="menu" hidden></div>
 
     <div id="toast" class="toast" role="status" hidden></div>
 

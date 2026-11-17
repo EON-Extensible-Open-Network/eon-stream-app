@@ -96,7 +96,10 @@ async function act(action, value = null) {
 // ---------------------------------------------------------------- awake/asleep
 
 function wake() {
-  document.body.classList.remove("sleep");
+  if (document.body.classList.contains("sleep")) {
+    document.body.classList.remove("sleep");
+    drawState();
+  }
   clearTimeout(SLEEP_TIMER);
   SLEEP_TIMER = setTimeout(sleep, 3000);
 }
@@ -125,18 +128,24 @@ function flash(name) {
 // --------------------------------------------------------------------- state
 
 async function poll() {
+  // One question at a time: a slow answer must not let a queue of them build
+  // up behind it, each holding the host's lock in turn.
+  if (poll.busy) return;
+  poll.busy = true;
   let status;
   try {
     status = await invoke("status");
   } catch (error) {
     return;
+  } finally {
+    poll.busy = false;
   }
   const player = status.player;
   STATE = player;
   if (!player.running) return; // The host is taking this page down.
 
-  $("title").textContent = player.title || "";
-  document.title = player.title || "EON Stream";
+  put($("title"), player.title || "");
+  if (document.title !== (player.title || "EON Stream")) document.title = player.title || "EON Stream";
 
   const toggle = $("toggle");
   const wanted = player.paused ? "play" : "pause";
@@ -157,11 +166,25 @@ async function poll() {
     $("volume").value = String(Math.round(player.volume));
   }
 
-  $("spinner").hidden = !player.buffering;
+  if ($("spinner").hidden !== !player.buffering) $("spinner").hidden = !player.buffering;
 
-  const duration = player.duration || 0;
-  const position = SCRUBBING ? SCRUBBING.at : player.position || 0;
-  drawTimeline(position, duration, player.buffered_seconds || 0);
+  // Nothing of the timeline is on screen while the controls are asleep, and
+  // this page is laid over a moving picture: every change to it is a frame
+  // the compositor has to blend again. It is drawn when they wake.
+  if (!document.body.classList.contains("sleep") || SCRUBBING) drawState();
+}
+
+function drawState() {
+  if (!STATE) return;
+  const duration = STATE.duration || 0;
+  const position = SCRUBBING ? SCRUBBING.at : STATE.position || 0;
+  drawTimeline(position, duration, STATE.buffered_seconds || 0);
+}
+
+/** Write text only when it changed: rewriting the same words still costs a
+ *  layout, twice a second, over the video. */
+function put(node, text) {
+  if (node.textContent !== text) node.textContent = text;
 }
 
 function drawTimeline(position, duration, buffered) {
@@ -170,8 +193,8 @@ function drawTimeline(position, duration, buffered) {
   $("played").style.width = `${fraction * 100}%`;
   $("buffered").style.width = `${ahead * 100}%`;
   $("thumb").style.left = `${fraction * 100}%`;
-  $("clock").textContent = duration ? `${clock(position)} / ${clock(duration)}` : clock(position);
-  $("remaining").textContent = duration ? t("ui.player.remaining", clock(duration - position)) : "";
+  put($("clock"), duration ? `${clock(position)} / ${clock(duration)}` : clock(position));
+  put($("remaining"), duration ? t("ui.player.remaining", clock(duration - position)) : "");
   const scrub = $("scrub");
   scrub.setAttribute("aria-valuemax", String(Math.round(duration)));
   scrub.setAttribute("aria-valuenow", String(Math.round(position)));

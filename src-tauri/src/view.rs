@@ -30,11 +30,41 @@ use eon_stream_core::{
     manifest::Catalog,
     ranking::{format_size, rank, RankedStream, Resolution},
     types::StreamSource,
-    AddonRegistry, Library, LibraryOrder, MetaPreview, Suggestion, WatchHistory,
+    AddonClient, AddonFailure, AddonRegistry, InstalledAddon, Library, LibraryOrder, Merged, Meta,
+    MetaPreview, Stream, Suggestion, WatchHistory,
 };
 use serde::Serialize;
 
-use crate::state::Session;
+use crate::{http::Http, state::Session};
+
+/// What a request to the addons needs, copied out of the session.
+///
+/// Every command that waits on an addon works in three steps: copy this out
+/// with the session locked, ask the addons with nothing locked, and fold the
+/// answer back in with the session locked again. Holding the lock for the
+/// whole request -- what this file used to do -- meant one slow addon
+/// answering one row held up every other row, the billboard, and the status
+/// poll that the loading screen and the player's controls are drawn from.
+/// Both copies are cheap: the client is a handle on a shared connection pool,
+/// and the registry is a few manifests.
+pub struct Net {
+    pub client: AddonClient<Http>,
+    pub registry: AddonRegistry,
+}
+
+impl Net {
+    pub fn of(session: &Session) -> Self {
+        Self {
+            client: session.client.clone(),
+            registry: session.registry.clone(),
+        }
+    }
+}
+
+/// How many listed items are remembered for saving to the library. Paging a
+/// few long rows would otherwise grow the list without end, and every save
+/// walks it.
+const PREVIEWS_KEPT: usize = 2_000;
 
 /// An installed addon, as the interface sees it: no address, ever.
 #[derive(Serialize)]
@@ -88,6 +118,14 @@ pub struct RowView {
     pub catalog_id: Option<String>,
     pub content_type: Option<String>,
     pub searchable: bool,
+    /// `trending` or `new`, when the catalogue's own id or name says it is
+    /// one of those. Read from the addon's words, never decided here: this
+    /// program does not rank or recommend anything itself.
+    pub role: Option<String>,
+    /// The one parameter a catalogue needs before it answers, and the value
+    /// it is asked with -- the first the addon lists. Cinemeta's "New" needs
+    /// a year.
+    pub extra: Option<(String, String)>,
     pub items: Vec<ItemView>,
 }
 
@@ -106,6 +144,10 @@ pub struct SearchView {
 pub struct EpisodeView {
     pub id: String,
     pub title: String,
+    /// Whether `title` is the episode's own name rather than `SxxEyy`, which
+    /// is what an addon that names no episodes leaves.
+    pub named: bool,
+    pub overview: Option<String>,
     pub season: Option<u32>,
     pub episode: Option<u32>,
     pub released: Option<String>,
@@ -148,6 +190,8 @@ pub struct SourceView {
     pub addon_name: String,
     pub quality: String,
     pub size: Option<String>,
+    /// The same, as a number, for sorting by it.
+    pub size_bytes: Option<u64>,
     pub seeders: Option<u32>,
     /// Audio languages the source says it carries -- what a dub is. Two-letter
     /// codes where the language table knows the label, so the interface can
@@ -346,6 +390,8 @@ pub fn rows(session: &Session) -> Vec<RowView> {
             catalog_id: None,
             content_type: None,
             searchable: false,
+            role: None,
+            extra: None,
             items: watching,
         });
     }
@@ -381,6 +427,8 @@ pub fn rows(session: &Session) -> Vec<RowView> {
             catalog_id: None,
             content_type: None,
             searchable: false,
+            role: None,
+            extra: None,
             items: kept,
         });
     }
@@ -388,6 +436,9 @@ pub fn rows(session: &Session) -> Vec<RowView> {
     for addon in session.registry.enabled() {
         let summary = addon.summary();
         for catalog in &addon.manifest.catalogs {
+            let Some(extra) = required_extra(catalog) else {
+                continue;
+            };
             rows.push(RowView {
                 kind: "catalog".to_owned(),
                 title: catalog_title(catalog, &summary.name),
@@ -396,11 +447,53 @@ pub fn rows(session: &Session) -> Vec<RowView> {
                 catalog_id: Some(catalog.id.clone()),
                 content_type: Some(catalog.content_type.clone()),
                 searchable: catalog.is_searchable(),
+                role: role_of(catalog).map(ToOwned::to_owned),
+                extra,
                 items: Vec::new(),
             });
         }
     }
     rows
+}
+
+/// The parameter a catalogue needs before it answers, if any.
+///
+/// `Some(None)` is a catalogue that needs nothing. A catalogue that needs one
+/// parameter and lists its values is asked with the first of them. One that
+/// needs a value nobody listed -- the ids of the series someone follows, say
+/// -- cannot be asked at all, and is `None`: left off the screen rather than
+/// drawn as a row that only ever shows an error.
+fn required_extra(catalog: &Catalog) -> Option<Option<(String, String)>> {
+    let mut extra = None;
+    for prop in catalog.extra.iter().filter(|prop| prop.is_required) {
+        match (prop.options.first(), &extra) {
+            (Some(value), None) => extra = Some((prop.name.clone(), value.clone())),
+            _ => return None,
+        }
+    }
+    Some(extra)
+}
+
+/// Whether a catalogue calls itself trending or new, in its own id or name.
+fn role_of(catalog: &Catalog) -> Option<&'static str> {
+    let words = format!(
+        "{} {}",
+        catalog.id,
+        catalog.name.as_deref().unwrap_or_default()
+    )
+    .to_lowercase();
+    let has = |list: &[&str]| {
+        words
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|word| list.contains(&word))
+    };
+    if has(&["top", "popular", "trending", "trend", "hot"]) {
+        Some("trending")
+    } else if has(&["new", "year", "latest", "recent", "releases"]) {
+        Some("new")
+    } else {
+        None
+    }
 }
 
 /// What to call a catalogue.
@@ -420,52 +513,125 @@ fn catalog_title(catalog: &Catalog, addon_name: &str) -> String {
     base
 }
 
-/// One page of one catalogue.
-pub fn row_items(
-    session: &mut Session,
+/// One catalogue page, ready to ask for.
+pub struct PageRequest {
+    client: AddonClient<Http>,
+    addon: InstalledAddon,
+    content_type: String,
+    catalog_id: String,
+    params: Vec<(String, String)>,
+}
+
+/// Step one of a catalogue page: what to ask, and of whom.
+///
+/// A parameter the interface passes is used only when the catalogue declares
+/// it, and with a value from the catalogue's own list when it has one: the
+/// interface chooses among what the addon offers, it does not write queries.
+pub fn page_request(
+    session: &Session,
     addon_id: &str,
     content_type: &str,
     catalog_id: &str,
     skip: usize,
     query: Option<&str>,
-) -> Result<Vec<ItemView>, String> {
+    extra: Option<(String, String)>,
+) -> Result<PageRequest, String> {
     let addon = session
         .registry
         .get(addon_id)
+        .cloned()
         .ok_or_else(|| session.text("ui.error.noaddon"))?;
 
-    let skip_text = skip.to_string();
-    let mut extra: Vec<(&str, &str)> = Vec::new();
+    let mut params: Vec<(String, String)> = Vec::new();
+    if let Some((name, value)) = extra {
+        let declared = addon
+            .manifest
+            .catalogs
+            .iter()
+            .find(|c| c.id == catalog_id && c.content_type == content_type)
+            .and_then(|c| c.extra.iter().find(|prop| prop.name == name))
+            .is_some_and(|prop| prop.options.is_empty() || prop.options.contains(&value));
+        if declared {
+            params.push((name, value));
+        }
+    }
     if skip > 0 {
-        extra.push(("skip", skip_text.as_str()));
+        params.push(("skip".to_owned(), skip.to_string()));
     }
     if let Some(query) = query.filter(|q| !q.is_empty()) {
-        extra.push(("search", query));
+        params.push(("search".to_owned(), query.to_owned()));
     }
+    Ok(PageRequest {
+        client: session.client.clone(),
+        addon,
+        content_type: content_type.to_owned(),
+        catalog_id: catalog_id.to_owned(),
+        params,
+    })
+}
 
-    let previews = session
+/// Step two: ask, with nothing locked.
+pub fn fetch_page(request: &PageRequest) -> Result<Vec<MetaPreview>, String> {
+    let extra: Vec<(&str, &str)> = request
+        .params
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+    request
         .client
-        .catalog(addon, content_type, catalog_id, &extra)
-        .map_err(|e| e.to_string())?;
+        .catalog(
+            &request.addon,
+            &request.content_type,
+            &request.catalog_id,
+            &extra,
+        )
+        .map_err(|e| e.to_string())
+}
 
+/// Step three: cards, and the listing remembered for saving to the library.
+pub fn page_items(session: &mut Session, previews: Vec<MetaPreview>) -> Vec<ItemView> {
     let items = previews
         .iter()
         .map(|preview| item_from_preview(preview, &session.library, &session.history))
         .collect();
-    // Kept so saving to the library has a poster and a name without another
-    // request.
-    session.previews.extend(previews);
-    Ok(items)
+    remember(session, previews);
+    items
 }
 
-/// One search box over every searchable catalogue of every enabled addon.
+/// Keep a listing, so saving to the library has a poster and a name without
+/// another request -- the newest listings, up to [`PREVIEWS_KEPT`].
+fn remember(session: &mut Session, previews: Vec<MetaPreview>) {
+    session.previews.extend(previews);
+    let over = session.previews.len().saturating_sub(PREVIEWS_KEPT);
+    if over > 0 {
+        session.previews.drain(..over);
+    }
+}
+
+/// One search box over every searchable catalogue of every enabled addon,
+/// ready to ask.
 ///
 /// A query that comes back with almost nothing is tried again against titles
 /// that exist — what is in the library, what has been watched — and the
 /// interface is told what was typed so it can offer the literal query back.
 /// Corrections are never invented: the candidate list is the vocabulary, so
 /// this cannot turn a correctly spelled title into a different one.
-pub fn search(session: &mut Session, query: &str) -> Result<SearchView, String> {
+pub struct SearchRequest {
+    net: Net,
+    query: String,
+    vocabulary: Vec<String>,
+}
+
+/// What a search found, before it is turned into cards.
+pub struct Found {
+    query: String,
+    corrected_from: Option<String>,
+    previews: Vec<MetaPreview>,
+    failures: Vec<String>,
+}
+
+/// Step one of a search.
+pub fn search_request(session: &Session, query: &str) -> Result<SearchRequest, String> {
     let query = query.trim();
     if query.is_empty() {
         return Err(session.text("ui.error.emptyquery"));
@@ -473,54 +639,87 @@ pub fn search(session: &mut Session, query: &str) -> Result<SearchView, String> 
     if session.registry.enabled().count() == 0 {
         return Err(session.text("ui.error.noaddons"));
     }
+    let mut vocabulary: Vec<String> = session
+        .library
+        .names()
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect();
+    vocabulary.extend(session.history.names().into_iter().map(ToOwned::to_owned));
+    Ok(SearchRequest {
+        net: Net::of(session),
+        query: query.to_owned(),
+        vocabulary,
+    })
+}
 
-    let merged = session.client.search_all(&session.registry, query);
+/// Step two: ask, with nothing locked -- twice, when the spelling is in doubt.
+pub fn search_fetch(request: &SearchRequest) -> Found {
+    let net = &request.net;
+    let merged = net.client.search_all(&net.registry, &request.query);
     let failures = describe_failures(&merged.failures);
     let mut previews: Vec<MetaPreview> = merged.items.into_iter().flat_map(|(_, v)| v).collect();
+    let mut query = request.query.clone();
     let mut corrected_from = None;
 
     // Three results is not a query that needs its spelling questioned; one or
     // none is.
     if previews.len() < 2 {
-        // Scoped so the candidate list -- which borrows the library and the
-        // history -- is gone before anything is written back.
-        let suggestion = {
-            let mut candidates: Vec<&str> = session.library.names();
-            candidates.extend(session.history.names());
-            eon_stream_core::suggest(query, &candidates)
-        };
+        let candidates: Vec<&str> = request.vocabulary.iter().map(String::as_str).collect();
+        let suggestion = eon_stream_core::suggest(&request.query, &candidates);
         if let Some(suggestion) = suggestion.filter(Suggestion::is_meaningful) {
-            let retry = session
-                .client
-                .search_all(&session.registry, &suggestion.corrected);
+            let retry = net.client.search_all(&net.registry, &suggestion.corrected);
             let retried: Vec<MetaPreview> = retry.items.into_iter().flat_map(|(_, v)| v).collect();
             if retried.len() > previews.len() {
-                corrected_from = Some(query.to_owned());
+                corrected_from = Some(request.query.clone());
+                query = suggestion.corrected;
                 previews = retried;
             }
         }
     }
+    Found {
+        query,
+        corrected_from,
+        previews,
+        failures,
+    }
+}
 
-    let items = previews
+/// Step three: cards.
+pub fn search_view(session: &mut Session, found: Found) -> SearchView {
+    let items = found
+        .previews
         .iter()
         .map(|preview| item_from_preview(preview, &session.library, &session.history))
         .collect();
-    session.previews.extend(previews);
-
-    Ok(SearchView {
-        query: query.to_owned(),
-        corrected_from,
+    remember(session, found.previews);
+    SearchView {
+        query: found.query,
+        corrected_from: found.corrected_from,
         items,
-        failures,
-    })
+        failures: found.failures,
+    }
 }
 
-/// Everything about one item, from every addon that knows about it.
-///
-/// Remembered as the item being looked at, which is what playing a source and
-/// keeping it in the library work from.
-pub fn detail(session: &mut Session, content_type: &str, id: &str) -> Result<DetailView, String> {
-    let (view, meta) = detail_of(session, content_type, id)?;
+/// What every addon that knows about one item says about it.
+pub type Fetched = (Option<Meta>, Vec<AddonFailure>);
+
+/// Step two of `detail` and `feature`: ask, with nothing locked.
+pub fn fetch_meta(net: &Net, content_type: &str, id: &str) -> Fetched {
+    let (meta, _answered, failures) = net.client.meta_merged(&net.registry, content_type, id);
+    (meta, failures)
+}
+
+/// Step three of `detail`: the page, and the item remembered as the one being
+/// looked at, which is what playing a source and keeping it in the library
+/// work from.
+pub fn detail(
+    session: &mut Session,
+    content_type: &str,
+    id: &str,
+    fetched: Fetched,
+) -> Result<DetailView, String> {
+    let (view, meta) = detail_of(session, content_type, id, fetched)?;
     session.meta = Some(meta);
     Ok(view)
 }
@@ -528,19 +727,21 @@ pub fn detail(session: &mut Session, content_type: &str, id: &str) -> Result<Det
 /// The same, for the billboard on the home screen -- and *not* remembered.
 /// The billboard is drawn while a viewer may already be opening something
 /// else, and it must not become the item a source gets attributed to.
-pub fn feature(session: &Session, content_type: &str, id: &str) -> Result<DetailView, String> {
-    detail_of(session, content_type, id).map(|(view, _)| view)
+pub fn feature(
+    session: &Session,
+    content_type: &str,
+    id: &str,
+    fetched: Fetched,
+) -> Result<DetailView, String> {
+    detail_of(session, content_type, id, fetched).map(|(view, _)| view)
 }
 
 fn detail_of(
     session: &Session,
     content_type: &str,
     id: &str,
-) -> Result<(DetailView, eon_stream_core::Meta), String> {
-    let (meta, _answered, failures) =
-        session
-            .client
-            .meta_merged(&session.registry, content_type, id);
+    (meta, failures): Fetched,
+) -> Result<(DetailView, Meta), String> {
     let Some(meta) = meta else {
         let described = describe_failures(&failures);
         return Err(if described.is_empty() {
@@ -559,6 +760,14 @@ fn detail_of(
             EpisodeView {
                 id: video.id.clone(),
                 title: video.display_title(),
+                named: [&video.title, &video.name]
+                    .into_iter()
+                    .flatten()
+                    .any(|title| !title.trim().is_empty()),
+                overview: video
+                    .overview
+                    .clone()
+                    .filter(|text| !text.trim().is_empty()),
                 season: video.season,
                 episode: video.episode,
                 released: video.released.clone(),
@@ -613,22 +822,39 @@ fn language_codes<'a>(labels: impl Iterator<Item = &'a str>) -> Vec<String> {
     out
 }
 
-/// Every source for one item, ranked by the viewer's preferences.
+/// Step one of a source list: who to ask, and a number saying this is now the
+/// newest request -- see [`sources`].
+pub fn sources_request(session: &mut Session) -> Result<(Net, u64), String> {
+    if session.registry.enabled().count() == 0 {
+        return Err(session.text("ui.error.noaddons"));
+    }
+    session.sources_wanted += 1;
+    Ok((Net::of(session), session.sources_wanted))
+}
+
+/// Step two: ask, with nothing locked.
+pub fn fetch_sources(net: &Net, content_type: &str, id: &str) -> Merged<Stream> {
+    net.client.streams_from_all(&net.registry, content_type, id)
+}
+
+/// Step three: every source for one item, ranked by the viewer's preferences.
 ///
 /// The ranked list stays in the session. What comes back is labels and
-/// numbers, and `play(index)` is the only way to act on one.
+/// numbers, and `play(index)` is the only way to act on one -- which is why
+/// only the newest request may replace the list. Two lists asked for in quick
+/// succession can come back in either order, and an index the window read
+/// off one list must never be played from the other.
 pub fn sources(
     session: &mut Session,
     content_type: &str,
     id: &str,
     name: &str,
+    merged: &Merged<Stream>,
+    request: u64,
 ) -> Result<SourcesView, String> {
-    if session.registry.enabled().count() == 0 {
-        return Err(session.text("ui.error.noaddons"));
+    if request != session.sources_wanted {
+        return Err(session.text("ui.error.superseded"));
     }
-    let merged = session
-        .client
-        .streams_from_all(&session.registry, content_type, id);
     let failures = describe_failures(&merged.failures);
     let ranked = rank(&merged.items, &session.settings.ranking);
 
@@ -652,6 +878,7 @@ pub fn sources(
                 .unwrap_or_else(|| source.addon_id.clone()),
             quality: quality_label(source),
             size: source.facts.size_bytes.map(format_size),
+            size_bytes: source.facts.size_bytes,
             seeders: source.facts.seeders,
             languages: language_codes(source.facts.audio_languages.iter().map(String::as_str)),
             subtitle_languages: language_codes(
@@ -903,4 +1130,46 @@ pub fn tracks(session: &mut Session) -> Result<Vec<TrackView>, String> {
             selected: track.selected,
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn catalog(json: &str) -> Catalog {
+        serde_json::from_str(json).expect("a catalogue")
+    }
+
+    #[test]
+    fn a_catalogue_that_needs_a_listed_value_is_asked_with_the_first() {
+        // Cinemeta's "New": a year is required, and this year is listed first.
+        let new = catalog(
+            r#"{"type":"movie","id":"year","name":"New","extra":[
+                {"name":"genre","isRequired":true,"options":["2026","2025"]},
+                {"name":"skip"}]}"#,
+        );
+        assert_eq!(
+            required_extra(&new),
+            Some(Some(("genre".to_owned(), "2026".to_owned())))
+        );
+        assert_eq!(role_of(&new), Some("new"));
+    }
+
+    #[test]
+    fn a_catalogue_that_needs_an_unlisted_value_is_left_out() {
+        let followed = catalog(
+            r#"{"type":"series","id":"last-videos","name":"Last videos","extra":[
+                {"name":"lastVideosIds","isRequired":true}]}"#,
+        );
+        assert_eq!(required_extra(&followed), None);
+    }
+
+    #[test]
+    fn a_catalogue_that_needs_nothing_is_asked_as_it_is() {
+        let popular = catalog(r#"{"type":"movie","id":"top","name":"Popular"}"#);
+        assert_eq!(required_extra(&popular), Some(None));
+        assert_eq!(role_of(&popular), Some("trending"));
+        let featured = catalog(r#"{"type":"movie","id":"imdbRating","name":"Featured"}"#);
+        assert_eq!(role_of(&featured), None);
+    }
 }
