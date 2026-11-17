@@ -87,7 +87,12 @@ https://v3-cinemeta.strem.io/manifest.json
 Cinemeta serves catalogues and metadata only, so opening a film will find no
 sources. That is Cinemeta behaving correctly: it tells you what exists, and a
 streaming addon tells you where to watch it. To see playback immediately, paste
-a magnet link, a URL or a file path into the **Open** box at the top.
+a magnet link, a URL or a file path into the **Open** box at the top — or start
+the program on one:
+
+```
+eon-stream-v0.15-windows-x86_64.exe --play "magnet:?xt=urn:btih:..."
+```
 
 The prompt is still there, in `eon-stream-cli-…exe`:
 

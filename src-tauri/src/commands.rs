@@ -422,40 +422,52 @@ pub async fn play(state: State<'_, Shared>, index: usize, file: Option<usize>) -
 #[tauri::command]
 pub async fn play_link(state: State<'_, Shared>, link: String) -> Out<()> {
     let shared = Arc::clone(state.inner());
-    tauri::async_runtime::spawn_blocking(move || -> Out<()> {
-        let link = link.trim().to_owned();
-        if link.is_empty() {
-            return Err("nothing to play".to_owned());
-        }
+    tauri::async_runtime::spawn_blocking(move || play_link_now(&shared, &link))
+        .await
+        .map_err(|e| e.to_string())?
+}
 
-        if let Some(request) = torrents::request_from_argument(&link) {
-            let (engine, job) = {
-                let mut session = shared
-                    .lock()
-                    .map_err(|_| "the host lost track of its own state".to_owned())?;
-                let engine = session.torrent_engine()?;
-                (engine, Arc::clone(&session.job))
-            };
-            let source = torrents::TorrentSource {
-                request,
-                file_index: None,
-            };
-            return match torrents::resolve(&engine, &source, None, &job) {
-                Ok((source, _index)) => launch(&shared, source, Vec::new(), Vec::new(), None),
-                Err(message) => finish_with_error(&shared, message),
-            };
-        }
+/// Play a link, on the thread that calls this.
+///
+/// Shared with the startup path: `eon-stream <link>` is the same work, and
+/// having one function means the way a release gets verified is the way a
+/// viewer's paste is handled, rather than something that only resembles it.
+///
+/// # Errors
+///
+/// As text: nothing to play, a torrent that will not resolve, or mpv refusing
+/// to start.
+pub fn play_link_now(shared: &Shared, link: &str) -> Out<()> {
+    let link = link.trim().to_owned();
+    if link.is_empty() {
+        return Err("nothing to play".to_owned());
+    }
 
-        let path = std::path::Path::new(&link);
-        let source = if path.is_file() {
-            PlaybackSource::File(path.to_path_buf())
-        } else {
-            PlaybackSource::Url(link)
+    if let Some(request) = torrents::request_from_argument(&link) {
+        let (engine, job) = {
+            let mut session = shared
+                .lock()
+                .map_err(|_| "the host lost track of its own state".to_owned())?;
+            let engine = session.torrent_engine()?;
+            (engine, Arc::clone(&session.job))
         };
-        launch(&shared, source, Vec::new(), Vec::new(), None)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        let source = torrents::TorrentSource {
+            request,
+            file_index: None,
+        };
+        return match torrents::resolve(&engine, &source, None, &job) {
+            Ok((source, _index)) => launch(shared, source, Vec::new(), Vec::new(), None),
+            Err(message) => finish_with_error(shared, message),
+        };
+    }
+
+    let path = std::path::Path::new(&link);
+    let source = if path.is_file() {
+        PlaybackSource::File(path.to_path_buf())
+    } else {
+        PlaybackSource::Url(link)
+    };
+    launch(shared, source, Vec::new(), Vec::new(), None)
 }
 
 /// Pause, seek, stop, and the rest of what a player does.

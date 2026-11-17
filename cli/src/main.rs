@@ -4,15 +4,17 @@
 // Additional permission under GNU GPL version 3 section 7:
 // see LICENSE-EXCEPTION.md (EON Module ABI Exception 1.0).
 
-//! EON Stream alpha — a terminal front end over the addon protocol.
+//! EON Stream, headless — a terminal front end over the addon protocol.
 //!
-//! This is **not** the product. The product is a Tauri application, and it does
-//! not exist yet. Everything is proven at a prompt first, so that when there is a
-//! window it sits on work that already works.
+//! This is not the product; `eon-stream` is. Everything here was proven at a
+//! prompt first and the window was written on top of it (madde 2), which is why
+//! this build still ships: it is where the system is exercised, and it still
+//! does things the window does not — modules, the update check, subtitle search
+//! by hand, track selection, `eon://` deep links.
 //!
 //! Playback is mpv over JSON IPC (madde 2): HTTP and HTTPS streams — including
-//! HLS and DASH, which mpv handles natively — and local files. BitTorrent sources
-//! are listed but not playable; the streaming engine is the next slice.
+//! HLS and DASH, which mpv handles natively — local files, and BitTorrent
+//! sources through the engine's loopback server.
 //!
 //! Numbered selection throughout, because typing `tt0903747:1:1` by hand is not a
 //! user interface at any level of shallowness.
@@ -355,7 +357,7 @@ impl App {
 fn main() {
     let mut app = App::new();
 
-    println!("EON Stream {VERSION}  ·  alpha  ·  no interface yet, by design");
+    println!("EON Stream {VERSION}  ·  alpha  ·  the headless build");
     println!("An open ecosystem for everyone.  https://github.com/EON-Extensible-Open-Network");
     println!();
     println!("Plays HTTP, HLS, DASH, local files and BitTorrent through mpv.");

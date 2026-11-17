@@ -6,9 +6,11 @@
 
 //! EON Stream — the window.
 //!
-//! The interface was the last thing added, which is what madde 2 asked for:
-//! every part of what it does was proven at a prompt first, and the headless
-//! build still ships beside it as `eon-stream-cli`.
+//! The interface was the last thing added — at `v0.14`, during the alpha
+//! rather than at `v1` as madde 2 first had it. The half of that decision
+//! which mattered held: every part of what this window does was proven at a
+//! prompt first, and the headless build still ships beside it as
+//! `eon-stream-cli`.
 //!
 //! ## What this binary is
 //!
@@ -60,6 +62,18 @@ fn main() {
     let mut arguments = std::env::args().skip(1);
     match arguments.next().as_deref() {
         Some("--version" | "-V") => println!("EON Stream {VERSION}"),
+        // `eon-stream --play <magnet|url|path>` opens the window and starts on
+        // it. Two reasons it exists: a published build can then be verified by
+        // running it rather than by someone clicking through the window, which
+        // is the check `v0.13` taught this project to make; and it is the shape
+        // a file association and an `eon://` handler will need.
+        Some("--play") => match arguments.next() {
+            Some(link) => window(Some(link)),
+            None => {
+                eprintln!("--play needs a magnet link, info hash, URL or file path");
+                std::process::exit(2);
+            }
+        },
         Some("--selftest") => {
             let report = selftest();
             // A release build has no console to print into, so the report goes
@@ -78,13 +92,26 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        _ => window(),
+        _ => window(None),
     }
 }
 
-/// Open the window.
-fn window() {
+/// Open the window, optionally starting on something.
+fn window(play: Option<String>) {
     let session: Shared = Arc::new(Mutex::new(Session::load()));
+
+    if let Some(link) = play {
+        // On its own thread, because resolving a torrent waits on strangers and
+        // the window has to be up and answering while that happens. It reports
+        // through the job like any other playback, so what a viewer sees is the
+        // same buffering line they would see having pasted it themselves.
+        let shared = Arc::clone(&session);
+        std::thread::spawn(move || {
+            if let Err(e) = commands::play_link_now(&shared, &link) {
+                eprintln!("could not play that: {e}");
+            }
+        });
+    }
 
     let app = tauri::Builder::default()
         .manage(Arc::clone(&session))

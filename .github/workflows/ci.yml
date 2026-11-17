@@ -31,8 +31,12 @@ jobs:
         run: |
           bin=target/release/eon-stream-cli.exe
           # `quit` exercises startup, the prompt loop, and a clean exit.
-          # `help` proves the dispatch table is wired, including playback.
-          printf 'help\nquit\n' | "$bin" | tee /tmp/out.txt
+          # `help` and four of its sections prove the dispatch table is wired.
+          # Sections are asked for by name, not by number: a number is a
+          # position in a list that grows, and the point of this step is the
+          # commands rather than where they are printed. It broke once already
+          # for checking a sentence instead of a behaviour.
+          printf 'help\nhelp addons\nhelp playback\nhelp torrents\nhelp modules\nquit\n' | "$bin" | tee /tmp/out.txt
           # Asserted: the product name, the prompt, and that the commands exist.
           # Deliberately not the banner prose -- an earlier version of this step
           # checked a sentence, and broke the moment the sentence was correct to

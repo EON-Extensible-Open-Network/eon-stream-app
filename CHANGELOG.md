@@ -15,6 +15,26 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.15] — 2026-11-17
+
+Two things `v0.14` shipped wrong, found where this project keeps finding them: by
+running the published binary and by reading what CI said about it.
+
+### Fixed
+- **The headless build announced "no interface yet, by design"** — in the release whose
+  headline is the interface. It now says what it is: the headless build.
+- **The smoke test asserted the shape of `help`, not the commands.** `help` became a list
+  of sections at `v0.14`, so the step looking for `play <n>` in its output failed, and the
+  release went out with a red CI run beside it. It now opens the sections by name and
+  checks the commands are in them — the same lesson this step's own comment records from
+  the last time it broke.
+
+### Added
+- **`eon-stream --play <magnet|url|path>`** opens the window and starts on it. It exists
+  because verifying `v0.14` meant driving the window with synthetic keystrokes, which is
+  not a check anyone should have to repeat; it is also the shape a file association and an
+  `eon://` handler need. Same code path as pasting a link into the window.
+
 ## [v0.14] — 2026-11-17 — there is a window
 
 `eon-stream.exe` is now a Tauri application. `eon-stream-cli.exe` is the headless build,
@@ -220,7 +240,8 @@ acquires history is less trustworthy than one that says where it lapsed.
   *Superseded at `v0.14`*, which added the interface — written against a system that
   already worked, which is what this entry was protecting.
 
-[Unreleased]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.14...HEAD
+[Unreleased]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.15...HEAD
+[v0.15]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.14...v0.15
 [v0.14]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.13...v0.14
 [v0.13]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.12...v0.13
 [v0.12]: https://github.com/EON-Extensible-Open-Network/eon-stream-app/compare/v0.11...v0.12
