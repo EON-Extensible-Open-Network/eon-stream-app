@@ -237,6 +237,82 @@ pub struct PlayerView {
     pub speed: Option<f64>,
     /// Waiting on the network rather than paused by a person.
     pub buffering: bool,
+    /// At the end of the file, holding the last frame.
+    pub ended: bool,
+    /// The episode after this one, when there is one that has aired.
+    pub next: Option<NextView>,
+}
+
+/// The episode that comes next, for the player's "Next episode".
+#[derive(Serialize, Clone)]
+pub struct NextView {
+    /// `S01E02`.
+    pub label: String,
+    /// The episode's own name, when the addon gives one.
+    pub title: Option<String>,
+}
+
+/// The episode after the one playing: the next by season and episode, with
+/// specials (season 0) only after everything else, and only once it has
+/// aired. Answers its id and what to call it.
+#[must_use]
+pub fn next_episode(session: &Session) -> Option<(String, String)> {
+    let (video, meta) = next_video(session)?;
+    let label = episode_code(video);
+    let name = match video.title.as_ref().or(video.name.as_ref()) {
+        Some(title) if !title.trim().is_empty() => {
+            format!("{} · {label} · {title}", meta.display_name())
+        }
+        _ => format!("{} · {label}", meta.display_name()),
+    };
+    Some((video.id.clone(), name))
+}
+
+fn next_video(session: &Session) -> Option<(&eon_stream_core::types::Video, &Meta)> {
+    let playing = session.playing.as_ref()?;
+    let series = playing.series_id.as_deref()?;
+    let meta = session.meta.as_ref().filter(|meta| meta.id == series)?;
+    let mut videos: Vec<&eon_stream_core::types::Video> = meta
+        .videos
+        .iter()
+        .filter(|video| video.season.is_some() && video.episode.is_some())
+        .collect();
+    videos.sort_by_key(|video| (video.season == Some(0), video.season, video.episode));
+    let at = videos.iter().position(|video| video.id == playing.id)?;
+    let next = *videos.get(at + 1)?;
+    let today = today();
+    // An ISO date or timestamp compares as text: "2026-11-18T..." after
+    // "2026-11-18" is later the same day, which counts as aired.
+    let aired = next
+        .released
+        .as_deref()
+        .is_none_or(|released| released.get(..10).unwrap_or(released) <= today.as_str());
+    aired.then_some((next, meta))
+}
+
+fn episode_code(video: &eon_stream_core::types::Video) -> String {
+    format!(
+        "S{:02}E{:02}",
+        video.season.unwrap_or_default(),
+        video.episode.unwrap_or_default()
+    )
+}
+
+/// Today, as `YYYY-MM-DD` in UTC -- the form addons write release dates in.
+fn today() -> String {
+    #[allow(clippy::cast_possible_wrap)]
+    let days = (now_unix() / 86_400) as i64;
+    // Howard Hinnant's days-to-civil.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 /// One audio or subtitle track inside what is playing.
@@ -965,6 +1041,15 @@ pub fn status(session: &mut Session) -> StatusView {
         .map(|job| job.clone())
         .unwrap_or_default();
 
+    let next = next_video(session).map(|(video, _)| NextView {
+        label: episode_code(video),
+        title: video
+            .title
+            .as_ref()
+            .or(video.name.as_ref())
+            .filter(|title| !title.trim().is_empty())
+            .cloned(),
+    });
     let mut player = PlayerView::default();
     let mut seen = None;
     if let Some(running) = session.player.as_mut() {
@@ -1012,6 +1097,10 @@ pub fn status(session: &mut Session) -> StatusView {
                     .ok()
                     .and_then(|value| value.parse().ok()),
                 buffering,
+                ended: running
+                    .get_property("eof-reached")
+                    .is_ok_and(|value| value == "true"),
+                next,
             };
         }
     }
@@ -1183,5 +1272,15 @@ mod tests {
         assert_eq!(role_of(&popular), Some("trending"));
         let featured = catalog(r#"{"type":"movie","id":"imdbRating","name":"Featured"}"#);
         assert_eq!(role_of(&featured), None);
+    }
+}
+
+#[cfg(test)]
+mod date_tests {
+    #[test]
+    fn today_is_a_date() {
+        let today = super::today();
+        assert_eq!(today.len(), 10);
+        assert!(today.as_str() > "2026-01-01");
     }
 }

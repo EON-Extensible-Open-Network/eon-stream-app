@@ -463,92 +463,238 @@ pub async fn continue_remove(
 /// torrent needs its metadata and a prebuffer first, and the interface follows
 /// that through [`status`].
 #[tauri::command]
-pub async fn play(state: State<'_, Shared>, index: usize, file: Option<usize>) -> Out<()> {
+pub async fn play(
+    state: State<'_, Shared>,
+    index: usize,
+    file: Option<usize>,
+    from_start: Option<bool>,
+) -> Out<()> {
+    let shared = Arc::clone(state.inner());
+    let resume = !from_start.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || start(&shared, index, file, resume, None))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Start source `index` of the current list, on the calling thread.
+///
+/// `resume` says whether to pick up where the viewer left off; "Start over"
+/// is the one way to say no. `ticket` is a start already under way -- see
+/// [`play_next`] -- or `None` to begin one.
+fn start(
+    shared: &Shared,
+    index: usize,
+    file: Option<usize>,
+    resume: bool,
+    ticket: Option<u64>,
+) -> Out<()> {
+    // Everything that needs the lock happens first and the lock is then
+    // dropped, because what follows can take minutes.
+    let (ranked, playing, engine, job, ticket) = {
+        let mut session = shared
+            .lock()
+            .map_err(|_| "the host lost track of its own state".to_owned())?;
+        let ranked = session
+            .sources
+            .get(index)
+            .cloned()
+            .ok_or_else(|| session.text("ui.error.nosource"))?;
+        let playing = now_playing(&session, &ranked);
+        let engine = if torrents::source_of(&ranked.stream).is_some() {
+            Some(session.torrent_engine()?)
+        } else {
+            None
+        };
+        let job = Arc::clone(&session.job);
+        let ticket = match ticket {
+            // A start that began earlier -- the next episode, whose sources
+            // were being found under this ticket -- and may have been
+            // cancelled meanwhile.
+            Some(ticket) => {
+                if !job.lock().map(|job| job.wanted(ticket)).unwrap_or(true) {
+                    return Ok(());
+                }
+                ticket
+            }
+            None => job.lock().map(|mut job| job.begin()).unwrap_or_default(),
+        };
+        (ranked, playing, engine, job, ticket)
+    };
+
+    let subtitles: Vec<String> = ranked
+        .stream
+        .subtitles
+        .iter()
+        .map(|s| s.url.clone())
+        .collect();
+    let hints = ranked.stream.subtitle_match();
+    let mut search = subs::Search {
+        ticket,
+        subject: playing
+            .as_ref()
+            .map(|p| (p.content_type.clone(), p.id.clone())),
+        filename: hints.filename.map(ToOwned::to_owned),
+        video_hash: hints.video_hash.map(ToOwned::to_owned),
+        size: hints.video_size.or_else(|| ranked.stream.size_bytes()),
+        torrent: None,
+    };
+
+    let (source, headers) = match (torrents::source_of(&ranked.stream), engine) {
+        (Some(torrent), Some(engine)) => {
+            match torrents::resolve(&engine, &torrent, file, &job, ticket) {
+                // Subtitles that came with the stream still apply; the
+                // headers do not, because the player is reading from
+                // loopback rather than from the addon's host.
+                Ok(resolved) => {
+                    if let Ok(file) = resolved.handle.file(resolved.index) {
+                        search.filename = Some(file.name().to_owned());
+                        search.size = Some(file.length);
+                    }
+                    search.torrent = Some((engine, resolved.handle));
+                    (resolved.source, Vec::new())
+                }
+                Err(message) => return finish_with_error(shared, ticket, message),
+            }
+        }
+        _ => match to_playback_source(&ranked.stream) {
+            Ok(source) => (
+                source,
+                ranked
+                    .stream
+                    .request_headers()
+                    .into_iter()
+                    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                    .collect(),
+            ),
+            Err(message) => {
+                let message = {
+                    let session = shared
+                        .lock()
+                        .map_err(|_| "the host lost track of its own state".to_owned())?;
+                    session.text(&message)
+                };
+                return finish_with_error(shared, ticket, message);
+            }
+        },
+    };
+
+    launch(shared, source, headers, subtitles, playing, search, resume)
+}
+
+/// Play the episode after the one playing, from the same release when the
+/// addon groups its releases.
+///
+/// The work a person would do by hand -- open the series, pick the episode,
+/// pick a source -- in the order they would do it, with one rule for the
+/// last step: the source whose `bingeGroup` matches the one this series was
+/// last watched with, then one from the same addon, then the best match.
+/// Sources are found under the start's ticket, so "Cancel and go back" works
+/// here too.
+#[tauri::command]
+pub async fn play_next(state: State<'_, Shared>) -> Out<()> {
     let shared = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || -> Out<()> {
-        // Everything that needs the lock happens first and the lock is then
-        // dropped, because what follows can take minutes.
-        let (ranked, playing, engine, job, ticket) = {
-            let mut session = shared
-                .lock()
-                .map_err(|_| "the host lost track of its own state".to_owned())?;
-            let ranked = session
-                .sources
-                .get(index)
-                .cloned()
-                .ok_or_else(|| session.text("ui.error.nosource"))?;
-            let playing = now_playing(&session, &ranked);
-            let engine = if torrents::source_of(&ranked.stream).is_some() {
-                Some(session.torrent_engine()?)
-            } else {
-                None
-            };
-            let job = Arc::clone(&session.job);
-            let ticket = job.lock().map(|mut job| job.begin()).unwrap_or_default();
-            (ranked, playing, engine, job, ticket)
-        };
-
-        let subtitles: Vec<String> = ranked
-            .stream
-            .subtitles
-            .iter()
-            .map(|s| s.url.clone())
-            .collect();
-        let hints = ranked.stream.subtitle_match();
-        let mut search = subs::Search {
-            ticket,
-            subject: playing
+        let lost = || "the host lost track of its own state".to_owned();
+        let (net, request, next, name, wanted_group, addon, ticket) = {
+            let mut session = shared.lock().map_err(|_| lost())?;
+            let (next, name) =
+                view::next_episode(&session).ok_or_else(|| session.text("ui.error.nonext"))?;
+            let playing = session.playing.clone();
+            let wanted_group = playing
                 .as_ref()
-                .map(|p| (p.content_type.clone(), p.id.clone())),
-            filename: hints.filename.map(ToOwned::to_owned),
-            video_hash: hints.video_hash.map(ToOwned::to_owned),
-            size: hints.video_size.or_else(|| ranked.stream.size_bytes()),
-            torrent: None,
+                .and_then(|p| p.series_id.as_deref())
+                .and_then(|series| session.history.binge_group_for_series(series))
+                .map(ToOwned::to_owned)
+                .or_else(|| playing.as_ref().and_then(|p| p.binge_group.clone()));
+            let addon = playing.as_ref().and_then(|p| p.addon_id.clone());
+            let (net, request) = view::sources_request(&mut session)?;
+            let ticket = session
+                .job
+                .lock()
+                .map(|mut job| {
+                    let ticket = job.begin();
+                    job.at("ui.job.next", name.clone());
+                    ticket
+                })
+                .unwrap_or_default();
+            (net, request, next, name, wanted_group, addon, ticket)
         };
 
-        let (source, headers) = match (torrents::source_of(&ranked.stream), engine) {
-            (Some(torrent), Some(engine)) => {
-                match torrents::resolve(&engine, &torrent, file, &job, ticket) {
-                    // Subtitles that came with the stream still apply; the
-                    // headers do not, because the player is reading from
-                    // loopback rather than from the addon's host.
-                    Ok(resolved) => {
-                        if let Ok(file) = resolved.handle.file(resolved.index) {
-                            search.filename = Some(file.name().to_owned());
-                            search.size = Some(file.length);
-                        }
-                        search.torrent = Some((engine, resolved.handle));
-                        (resolved.source, Vec::new())
-                    }
-                    Err(message) => return finish_with_error(&shared, ticket, message),
-                }
-            }
-            _ => match to_playback_source(&ranked.stream) {
-                Ok(source) => (
-                    source,
-                    ranked
-                        .stream
-                        .request_headers()
-                        .into_iter()
-                        .map(|(k, v)| (k.to_owned(), v.to_owned()))
-                        .collect(),
-                ),
+        let merged = view::fetch_sources(&net, "series", &next);
+
+        let index = {
+            let mut session = shared.lock().map_err(|_| lost())?;
+            let listed = view::sources(&mut session, "series", &next, &name, &merged, request);
+            let found = match listed {
+                Ok(found) => found,
                 Err(message) => {
-                    let message = {
-                        let session = shared
-                            .lock()
-                            .map_err(|_| "the host lost track of its own state".to_owned())?;
-                        session.text(&message)
-                    };
+                    drop(session);
                     return finish_with_error(&shared, ticket, message);
                 }
-            },
+            };
+            if found.sources.is_empty() {
+                let message = session.text("ui.detail.nosources");
+                drop(session);
+                return finish_with_error(&shared, ticket, message);
+            }
+            let ranked = &session.sources;
+            wanted_group
+                .and_then(|group| {
+                    ranked
+                        .iter()
+                        .position(|r| r.stream.binge_group() == Some(group.as_str()))
+                })
+                .or_else(|| addon.and_then(|addon| ranked.iter().position(|r| r.addon_id == addon)))
+                .unwrap_or(0)
         };
-
-        launch(&shared, source, headers, subtitles, playing, search)
+        start(&shared, index, None, true, Some(ticket))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Mark an episode or a film as watched, or as not watched.
+///
+/// Watched is written as a history entry that is finished; not watched
+/// forgets the entry, which is also what takes it out of "Continue watching".
+#[tauri::command]
+pub async fn watched_set(
+    state: State<'_, Shared>,
+    content_type: String,
+    id: String,
+    watched: bool,
+) -> Out<bool> {
+    with_session(&state, move |session| {
+        if !watched {
+            session.history.forget(&content_type, &id);
+            session.save_history();
+            return Ok(false);
+        }
+        let meta = session.meta.as_ref();
+        let video = meta.and_then(|meta| meta.videos.iter().find(|video| video.id == id));
+        let name = meta.map_or_else(|| id.clone(), |meta| meta.display_name().to_owned());
+        let series_id = meta
+            .map(|meta| meta.id.clone())
+            .filter(|series| *series != id);
+        let entry = eon_stream_core::WatchEntry {
+            content_type: content_type.clone(),
+            id: id.clone(),
+            name,
+            series_id,
+            season: video.and_then(|video| video.season),
+            episode: video.and_then(|video| video.episode),
+            // Finished by definition: the whole of a runtime nobody measured.
+            position_secs: 1.0,
+            duration_secs: Some(1.0),
+            binge_group: None,
+            addon_id: None,
+            updated_at: eon_stream_core::history::now_unix(),
+        };
+        session.history.record(entry);
+        session.save_history();
+        Ok(true)
+    })
+    .await
 }
 
 /// Give up on what is starting or playing, and on what it fetched.
@@ -708,6 +854,7 @@ pub fn play_link_now(shared: &Shared, link: &str) -> Out<()> {
                     Vec::new(),
                     None,
                     search,
+                    true,
                 )
             }
             Err(message) => finish_with_error(shared, ticket, message),
@@ -720,7 +867,7 @@ pub fn play_link_now(shared: &Shared, link: &str) -> Out<()> {
     } else {
         PlaybackSource::Url(link)
     };
-    launch(shared, source, Vec::new(), Vec::new(), None, search)
+    launch(shared, source, Vec::new(), Vec::new(), None, search, true)
 }
 
 /// Pause, seek, stop, and the rest of what a player does.
@@ -987,6 +1134,7 @@ fn launch(
     subtitles: Vec<String>,
     playing: Option<NowPlaying>,
     search: subs::Search,
+    resume: bool,
 ) -> Out<()> {
     let ticket = search.ticket;
     // Before the lock: on a `--play` start this can wait for the window to be
@@ -1023,6 +1171,10 @@ fn launch(
     // picture stutters. `auto-safe` only picks decoders mpv considers safe
     // and falls back to software on its own when none fits.
     extra_args.push("--hwdec=auto-safe".to_owned());
+    // Stay on the last frame at the end rather than exiting: the controls
+    // decide what comes next -- the next episode, or back to the catalogue --
+    // and they cannot ask a player that has already gone.
+    extra_args.push("--keep-open=yes".to_owned());
     // Subtitles that read over a bright sky as well as a dark room: mpv's
     // default outline is thin enough to vanish against white.
     extra_args.push("--sub-border-size=2.6".to_owned());
@@ -1033,6 +1185,7 @@ fn launch(
 
     let resume = playing
         .as_ref()
+        .filter(|_| resume)
         .and_then(|p| session.history.resume_position(&p.content_type, &p.id));
     // The name, not the URL: `v0.13` shipped because a window title read
     // `Big%20Buck%20Bunny.mp4`.

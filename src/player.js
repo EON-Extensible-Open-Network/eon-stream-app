@@ -146,7 +146,8 @@ function wake() {
 function sleep() {
   // Never while paused, scrubbing, waiting, or with a panel open: those are
   // moments someone is looking at the controls.
-  const panelOpen = !$("tracks").hidden || !$("speed").hidden || !$("waiting").hidden;
+  const panelOpen =
+    !$("tracks").hidden || !$("speed").hidden || !$("waiting").hidden || !$("upnext").hidden;
   const hovering = document.querySelector(".bottom:hover, .top:hover");
   if (!STATE || STATE.paused || SCRUBBING || panelOpen || hovering) {
     SLEEP_TIMER = setTimeout(sleep, 3000);
@@ -209,18 +210,29 @@ async function poll() {
   // Waiting on the network: the spinner, what it is waiting on, and the way
   // out. The controls stay up meanwhile -- someone watching a spinner is
   // deciding whether to keep waiting.
+  // The next episode being found and fetched is a wait too, with the same
+  // way out.
+  const starting = status.job && status.job.active;
+  const waitingNow = player.buffering || starting;
   const waiting = $("waiting");
-  if (waiting.hidden !== !player.buffering) waiting.hidden = !player.buffering;
-  if (player.buffering) {
+  if (waiting.hidden !== !waitingNow) waiting.hidden = !waitingNow;
+  if (waitingNow) {
     wake();
     const torrent = status.torrents && status.torrents[0];
-    put(
-      $("waiting-line"),
-      torrent && !torrent.finished
-        ? t("ui.player.peers", torrent.peers, bytes(torrent.down_bps))
-        : t("ui.player.waiting")
-    );
+    let line;
+    if (starting) {
+      line = t(status.job.stage);
+      if (status.job.progress !== null && status.job.progress !== undefined) {
+        line += ` ${Math.round(status.job.progress * 100)}%`;
+      }
+    } else if (torrent && !torrent.finished) {
+      line = t("ui.player.peers", torrent.peers, bytes(torrent.down_bps));
+    } else {
+      line = t("ui.player.waiting");
+    }
+    put($("waiting-line"), line);
   }
+  drawNext(player, starting);
 
   // Nothing of the timeline is on screen while the controls are asleep, and
   // this page is laid over a moving picture: every change to it is a frame
@@ -253,6 +265,85 @@ function drawTimeline(position, duration, buffered) {
   scrub.setAttribute("aria-valuemax", String(Math.round(duration)));
   scrub.setAttribute("aria-valuenow", String(Math.round(position)));
   scrub.setAttribute("aria-valuetext", clock(position));
+}
+
+// ------------------------------------------------------------------ up next
+
+/** How long the count down to the next episode runs, in milliseconds. */
+const UPNEXT_MS = 10000;
+/** How near the end the card appears, in seconds. */
+const UPNEXT_AT = 30;
+const UPNEXT = { shown: false, dismissed: false, going: false, deadline: 0, leaving: false };
+
+function nextName(next) {
+  return next.title ? `${next.label} · ${next.title}` : next.label;
+}
+
+/** The next-episode button, and near the end the card that counts down to
+ *  it. At the very end -- mpv holds the last frame -- the next episode starts
+ *  unless the viewer said they would rather watch the credits; with nothing
+ *  next, the player goes and the page it came from is back. */
+function drawNext(player, starting) {
+  const next = player.next;
+  const button = $("next");
+  if (button.hidden !== !next) button.hidden = !next;
+  if (next) {
+    const text = t("ui.player.nextis", nextName(next));
+    if (button.title !== text) {
+      button.title = text;
+      button.setAttribute("aria-label", text);
+    }
+  }
+
+  const remaining =
+    player.duration && player.position !== null && player.position !== undefined
+      ? player.duration - player.position
+      : null;
+  const near = remaining !== null && remaining <= UPNEXT_AT && player.duration > UPNEXT_AT * 2;
+  const card = $("upnext");
+  const want = Boolean(next) && !UPNEXT.dismissed && !UPNEXT.going && !starting && (near || player.ended);
+
+  if (want && !UPNEXT.shown) {
+    UPNEXT.shown = true;
+    UPNEXT.deadline = Date.now() + UPNEXT_MS;
+    put($("upnext-title"), nextName(next));
+    card.hidden = false;
+    wake();
+  } else if (!want && UPNEXT.shown) {
+    UPNEXT.shown = false;
+    card.hidden = true;
+  }
+  if (!near && !player.ended) {
+    // Seeking back out of the credits forgets a "watch the credits".
+    UPNEXT.dismissed = false;
+  }
+
+  if (UPNEXT.shown) {
+    // Paused is paused: the count down waits too.
+    if (player.paused && !player.ended) UPNEXT.deadline += 500;
+    const left = Math.max(0, UPNEXT.deadline - Date.now());
+    put($("upnext-text"), t("ui.player.nextin", Math.ceil(left / 1000)));
+    $("upnext-fill").style.width = `${(1 - left / UPNEXT_MS) * 100}%`;
+    if (left === 0 || player.ended) playNext();
+  } else if (player.ended && !starting && !UPNEXT.going && !UPNEXT.leaving) {
+    // The end, and nothing (wanted) after it.
+    UPNEXT.leaving = true;
+    setTimeout(() => act("stop"), 1500);
+  }
+}
+
+async function playNext() {
+  if (UPNEXT.going) return;
+  UPNEXT.going = true;
+  UPNEXT.shown = false;
+  $("upnext").hidden = true;
+  try {
+    await invoke("play_next");
+  } catch (error) {
+    UPNEXT.going = false;
+    UPNEXT.dismissed = true;
+    put($("waiting-line"), String(error));
+  }
 }
 
 // ------------------------------------------------------------------ timeline
@@ -505,6 +596,8 @@ function onKey(event) {
   } else if (key === "arrowdown") {
     event.preventDefault();
     setVolume(Number($("volume").value) - 5);
+  } else if (key === "n" && !$("next").hidden) {
+    playNext();
   } else if (key === "m") {
     act("mute");
   } else if (key === "f") {
@@ -534,6 +627,13 @@ async function boot() {
   $("back").addEventListener("click", () => act("stop"));
   $("stop").addEventListener("click", () => act("stop"));
   $("abandon").addEventListener("click", abandon);
+  $("next").addEventListener("click", playNext);
+  $("upnext-play").addEventListener("click", playNext);
+  $("upnext-dismiss").addEventListener("click", () => {
+    UPNEXT.dismissed = true;
+    UPNEXT.shown = false;
+    $("upnext").hidden = true;
+  });
   $("sub-file-open").addEventListener("click", () => $("sub-file").click());
   $("sub-file").addEventListener("change", () => {
     const input = $("sub-file");

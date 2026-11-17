@@ -72,6 +72,10 @@ const ICONS = {
     ["circle", { cx: 12, cy: 12, r: 2.8 }],
   ],
   plus: [["path", { d: "M12 5v14M5 12h14" }]],
+  next: [
+    ["path", { d: "M6 5.5l9 6.5-9 6.5z", fill: "currentColor" }],
+    ["path", { d: "M18 5.5v13" }],
+  ],
   check: [["path", { d: "M5 12.5l4.5 4.5L19 7.5" }]],
   info: [
     ["circle", { cx: 12, cy: 12, r: 9 }],

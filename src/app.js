@@ -798,6 +798,17 @@ async function openDetail(contentType, id) {
   play.appendChild(icon("play"));
   play.appendChild(el("span", { text: playLabel }));
   actions.appendChild(play);
+  // Somewhere to resume from is also somewhere not to: the beginning.
+  if (detail.resume_at) {
+    const over = el("button", {
+      className: "button ghost",
+      attrs: { type: "button" },
+      onClick: () => playFromDetail(true),
+    });
+    over.appendChild(icon("refresh"));
+    over.appendChild(el("span", { text: t("ui.action.startover") }));
+    actions.appendChild(over);
+  }
 
   const keep = el("button", { className: "round", attrs: { type: "button" } });
   const drawKeep = () => {
@@ -861,7 +872,7 @@ function backButton() {
 
 /** The Play button on a detail page: the first source the list shows, which
  *  is the best one the viewer's preferences and filters allow. */
-async function playFromDetail() {
+async function playFromDetail(fromStart = false) {
   if (!DETAIL) return;
   if (DETAIL.episodes.length > 0) {
     const next =
@@ -877,7 +888,7 @@ async function playFromDetail() {
     toast(t("ui.detail.nosources"));
     return;
   }
-  play(shown[0].index, SOURCES.name, DETAIL.background || DETAIL.poster);
+  play(shown[0].index, SOURCES.name, DETAIL.background || DETAIL.poster, fromStart);
 }
 
 /** Play from the billboard: a film starts on its best source; a series opens,
@@ -944,7 +955,7 @@ function renderEpisodes(container, detail) {
           className: "episode",
           attrs: { type: "button" },
           onClick: () => {
-            for (const other of list.children) other.removeAttribute("aria-current");
+            for (const other of list.querySelectorAll(".episode")) other.removeAttribute("aria-current");
             row.setAttribute("aria-current", "true");
             loadSources("series", episode.id, episodeName(detail, episode));
           },
@@ -971,7 +982,29 @@ function renderEpisodes(container, detail) {
           }),
         ]
       );
-      list.appendChild(row);
+      // Watched or not, by hand: for an episode seen somewhere else, or one
+      // started by mistake.
+      const mark = el("button", {
+        className: "round mark",
+        attrs: {
+          type: "button",
+          "aria-pressed": String(Boolean(episode.finished)),
+          "aria-label": t(episode.finished ? "ui.episode.unmark" : "ui.episode.mark"),
+          title: t(episode.finished ? "ui.episode.unmark" : "ui.episode.mark"),
+        },
+        onClick: async () => {
+          const watched = await ask("watched_set", {
+            contentType: "series",
+            id: episode.id,
+            watched: !episode.finished,
+          });
+          episode.finished = watched;
+          episode.progress = watched ? 1 : null;
+          draw(season);
+        },
+      });
+      mark.appendChild(icon("check"));
+      list.appendChild(el("div", { className: "episode-line" }, [row, mark]));
     }
   };
 
@@ -1277,10 +1310,10 @@ function sourceRow(source) {
 
 // --------------------------------------------------------------- playing it
 
-async function play(index, name, art) {
+async function play(index, name, art, fromStart = false) {
   showLoading(name, art, t("ui.job.starting"));
   try {
-    await ask("play", { index, file: null });
+    await ask("play", { index, file: null, fromStart });
   } catch (error) {
     hideLoading();
     return;

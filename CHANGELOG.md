@@ -15,6 +15,33 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.19] — 2026-11-18 — one episode after another
+
+### Added
+- **Up next.** Thirty seconds before the end of an episode a card names the next one and
+  counts ten seconds down to it, as the button filling up; the count waits while the
+  picture is paused. "Watch the credits" stops it, and seeking back out of the credits
+  forgets that. At the very end the next episode starts unless the viewer said otherwise.
+- **The same release, episode after episode.** The next episode's sources are found and
+  the one picked is the source whose `bingeGroup` matches the one the series was last
+  watched with, then one from the same addon, then the best match — the rule the
+  headless build's `next` already followed. "Cancel and go back" works while it is being
+  found.
+- **A next-episode button** in the player's controls, with the episode's name on it, and
+  `N` on the keyboard.
+- **Start over.** A film with somewhere to resume from offers "Start over" beside
+  "Resume".
+- **Watched, by hand.** Each episode has a mark that sets it watched or not watched — for
+  an episode seen somewhere else, or one started by mistake. Not watched also takes it
+  out of continue watching.
+
+### Changed
+- mpv holds the last frame at the end of a file (`--keep-open`) instead of exiting, so the
+  controls decide what happens next. With no next episode, the player goes after a moment
+  and the page it was started from is back, as before.
+- The next episode is the next by season and episode number, specials last, and only one
+  that has aired: an announced episode is not offered.
+
 ## [v0.18] — 2026-11-18 — a way out, and subtitles that are found
 
 ### Fixed

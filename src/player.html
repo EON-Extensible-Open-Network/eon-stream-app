@@ -70,6 +70,7 @@ headless build's prompt uses.
         <div id="title" class="title"></div>
 
         <div class="cluster right">
+          <button id="next" class="control" type="button" data-icon="next" data-label="ui.player.next" hidden></button>
           <button id="stop" class="control" type="button" data-icon="stop" data-label="ui.player.stop"></button>
           <button id="tracks-open" class="control" type="button" data-icon="subtitles" data-label="ui.player.tracks"></button>
           <button id="speed-open" class="control" type="button" data-icon="speed" data-label="ui.player.speed"></button>
@@ -93,6 +94,20 @@ headless build's prompt uses.
         <input id="sub-file" type="file" accept=".srt,.ass,.ssa,.vtt" hidden />
       </div>
     </div>
+
+    <!-- The end of an episode: what comes next, and a count down to it that
+         a press skips or stops. -->
+    <aside id="upnext" class="upnext" hidden>
+      <div class="upnext-label" data-say="ui.player.upnext"></div>
+      <div id="upnext-title" class="upnext-title"></div>
+      <div class="upnext-actions">
+        <button id="upnext-play" class="upnext-play" type="button">
+          <span id="upnext-fill" class="upnext-fill" aria-hidden="true"></span>
+          <span id="upnext-text" class="upnext-text"></span>
+        </button>
+        <button id="upnext-dismiss" class="upnext-dismiss" type="button" data-say="ui.player.credits"></button>
+      </div>
+    </aside>
 
     <div id="speed" class="panel speed" hidden>
       <h3 data-say="ui.player.speed"></h3>

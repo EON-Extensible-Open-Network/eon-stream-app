@@ -1830,6 +1830,27 @@ main {
 
 /* ---------------------------------------------------------------- episodes */
 
+.episode-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.episode-line .episode {
+  flex: 1;
+  min-width: 0;
+}
+
+.round.mark {
+  flex: none;
+  color: var(--muted);
+}
+
+.round.mark[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .episode .synopsis {
   margin-top: 6px;
   color: var(--muted);
