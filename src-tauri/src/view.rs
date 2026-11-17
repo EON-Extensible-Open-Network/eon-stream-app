@@ -57,6 +57,8 @@ pub struct ItemView {
     pub content_type: String,
     pub name: String,
     pub poster: Option<String>,
+    /// The catalogue's own blurb, for the billboard on the home screen.
+    pub description: Option<String>,
     pub year: Option<String>,
     pub rating: Option<String>,
     pub in_library: bool,
@@ -147,7 +149,15 @@ pub struct SourceView {
     pub quality: String,
     pub size: Option<String>,
     pub seeders: Option<u32>,
+    /// Audio languages the source says it carries -- what a dub is. Two-letter
+    /// codes where the language table knows the label, so the interface can
+    /// filter on them and name them in its own language; the addon's own
+    /// spelling where it does not.
     pub languages: Vec<String>,
+    /// Languages of the subtitle files that come with the source, the same
+    /// way. Empty does not mean "no subtitles": a release can carry them
+    /// inside the file, which `has_subtitles` reports.
+    pub subtitle_languages: Vec<String>,
     pub is_torrent: bool,
     pub has_subtitles: bool,
     pub preferred_audio: bool,
@@ -177,6 +187,25 @@ pub struct PlayerView {
     pub position_clock: Option<String>,
     pub duration_clock: Option<String>,
     pub buffered_seconds: Option<f64>,
+    /// 0 to 100, as mpv reports it.
+    pub volume: Option<f64>,
+    pub muted: bool,
+    pub speed: Option<f64>,
+    /// Waiting on the network rather than paused by a person.
+    pub buffering: bool,
+}
+
+/// One audio or subtitle track inside what is playing.
+#[derive(Serialize)]
+pub struct TrackView {
+    pub id: u32,
+    /// `audio` or `sub`. Video tracks are not offered: a file with two is
+    /// rare enough that a menu for it would be clutter.
+    pub kind: String,
+    /// A two-letter code when the language table knows the file's label.
+    pub language: Option<String>,
+    pub title: Option<String>,
+    pub selected: bool,
 }
 
 /// One poll of everything that changes on its own.
@@ -202,6 +231,11 @@ pub struct SettingsView {
     /// (madde 36). Walked rather than asserted.
     pub audit_clean: bool,
     pub audit_found: Vec<String>,
+    /// Languages a picker may offer, as two-letter codes. A list rather than
+    /// a text box: a language typed free-hand is one nothing will ever match.
+    pub languages: Vec<String>,
+    /// Bytes of downloaded pieces on disk.
+    pub buffer_bytes: u64,
 }
 
 /// The about page: what this build is and what it trusts.
@@ -228,6 +262,7 @@ fn item_from_preview(preview: &MetaPreview, library: &Library, history: &WatchHi
         content_type: preview.content_type.clone(),
         name: preview.display_name().to_owned(),
         poster: preview.poster.clone(),
+        description: preview.description.clone(),
         year: preview.release_info.clone(),
         rating: preview.imdb_rating.clone(),
         in_library: library.contains(&preview.content_type, &preview.id),
@@ -289,6 +324,7 @@ pub fn rows(session: &Session) -> Vec<RowView> {
                 content_type: entry.content_type.clone(),
                 name: entry.name.clone(),
                 poster,
+                description: None,
                 year: None,
                 rating: None,
                 in_library: session.library.contains(&entry.content_type, &entry.id),
@@ -324,6 +360,7 @@ pub fn rows(session: &Session) -> Vec<RowView> {
             content_type: entry.content_type.clone(),
             name: entry.name.clone(),
             poster: entry.poster.clone(),
+            description: None,
             year: entry.release_info.clone(),
             rating: None,
             in_library: true,
@@ -376,7 +413,11 @@ fn catalog_title(catalog: &Catalog, addon_name: &str) -> String {
         .name
         .clone()
         .unwrap_or_else(|| catalog.id.replace(['_', '-'], " "));
-    format!("{base} · {} · {addon_name}", catalog.content_type)
+    // Only the catalogue's own name. The type and the addon are separate
+    // fields of the row, and the interface names them in its own language --
+    // `movie` joined into a title is a word nobody can translate.
+    let _ = addon_name;
+    base
 }
 
 /// One page of one catalogue.
@@ -475,7 +516,27 @@ pub fn search(session: &mut Session, query: &str) -> Result<SearchView, String> 
 }
 
 /// Everything about one item, from every addon that knows about it.
+///
+/// Remembered as the item being looked at, which is what playing a source and
+/// keeping it in the library work from.
 pub fn detail(session: &mut Session, content_type: &str, id: &str) -> Result<DetailView, String> {
+    let (view, meta) = detail_of(session, content_type, id)?;
+    session.meta = Some(meta);
+    Ok(view)
+}
+
+/// The same, for the billboard on the home screen -- and *not* remembered.
+/// The billboard is drawn while a viewer may already be opening something
+/// else, and it must not become the item a source gets attributed to.
+pub fn feature(session: &Session, content_type: &str, id: &str) -> Result<DetailView, String> {
+    detail_of(session, content_type, id).map(|(view, _)| view)
+}
+
+fn detail_of(
+    session: &Session,
+    content_type: &str,
+    id: &str,
+) -> Result<(DetailView, eon_stream_core::Meta), String> {
     let (meta, _answered, failures) =
         session
             .client
@@ -528,8 +589,28 @@ pub fn detail(session: &mut Session, content_type: &str, id: &str) -> Result<Det
         has_trailer: meta.trailer_url().is_some(),
         failures: describe_failures(&failures),
     };
-    session.meta = Some(meta);
-    Ok(view)
+    Ok((view, meta))
+}
+
+/// A language label as a code when the table knows it, and as written when it
+/// does not -- a filter can still offer a language it has never heard of.
+fn language_code(label: &str) -> Option<String> {
+    let trimmed = label.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(language::canonical(trimmed).map_or_else(|| trimmed.to_lowercase(), ToOwned::to_owned))
+}
+
+/// Codes, in first-seen order, without repeats.
+fn language_codes<'a>(labels: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for code in labels.filter_map(language_code) {
+        if !out.contains(&code) {
+            out.push(code);
+        }
+    }
+    out
 }
 
 /// Every source for one item, ranked by the viewer's preferences.
@@ -572,7 +653,14 @@ pub fn sources(
             quality: quality_label(source),
             size: source.facts.size_bytes.map(format_size),
             seeders: source.facts.seeders,
-            languages: source.facts.audio_languages.clone(),
+            languages: language_codes(source.facts.audio_languages.iter().map(String::as_str)),
+            subtitle_languages: language_codes(
+                source
+                    .stream
+                    .subtitles
+                    .iter()
+                    .filter_map(|subtitle| subtitle.lang.as_deref()),
+            ),
             is_torrent: matches!(source.stream.source(), Some(StreamSource::Torrent { .. })),
             has_subtitles: source.facts.has_subtitles || !source.stream.subtitles.is_empty(),
             // Whether this source speaks a language the viewer asked for, so
@@ -674,6 +762,19 @@ pub fn status(session: &mut Session) -> StatusView {
                 position_clock: position.map(clock),
                 duration_clock: duration.map(clock),
                 buffered_seconds: running.buffered_secs().ok().flatten(),
+                volume: running
+                    .get_property("volume")
+                    .ok()
+                    .and_then(|value| value.parse().ok()),
+                muted: running
+                    .get_property("mute")
+                    .map(|value| value == "true")
+                    .unwrap_or_default(),
+                speed: running
+                    .get_property("speed")
+                    .ok()
+                    .and_then(|value| value.parse().ok()),
+                buffering: running.is_buffering().unwrap_or_default(),
             };
         }
     }
@@ -715,6 +816,8 @@ pub fn settings(session: &Session) -> SettingsView {
         summary: session.settings.summary(),
         audit_clean: found.is_empty(),
         audit_found: found,
+        languages: language::known().map(ToOwned::to_owned).collect(),
+        buffer_bytes: crate::buffer::size(session),
     }
 }
 
@@ -781,4 +884,23 @@ pub fn library_save(session: &mut Session, content_type: &str, id: &str) -> Resu
 /// Registry order, as a number the interface can hand back.
 pub fn position_of(registry: &AddonRegistry, id: &str) -> Option<usize> {
     registry.addons().iter().position(|addon| addon.id() == id)
+}
+
+/// The audio and subtitle tracks of what is playing.
+pub fn tracks(session: &mut Session) -> Result<Vec<TrackView>, String> {
+    let Some(player) = session.player.as_mut() else {
+        return Err(session.text("ui.error.noplayer"));
+    };
+    let tracks = player.tracks().map_err(|e| e.to_string())?;
+    Ok(tracks
+        .into_iter()
+        .filter(|track| track.kind == "audio" || track.kind == "sub")
+        .map(|track| TrackView {
+            id: track.id,
+            kind: track.kind,
+            language: track.language.as_deref().and_then(language_code),
+            title: track.title,
+            selected: track.selected,
+        })
+        .collect())
 }

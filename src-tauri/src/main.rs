@@ -21,13 +21,13 @@
 //! addon addresses, and reaches the host only through the commands enumerated
 //! in [`commands`].
 //!
-//! ## What it still does not do
+//! ## Where the video goes
 //!
-//! Video plays in mpv's own window, not in this one (madde 2). Embedding a
-//! native video surface under the webview is a later and independent slice:
-//! the hard part was never compiling mpv, it is the z-order and transparency
-//! of a child surface beneath a system webview on three platforms, and getting
-//! it wrong on one blocks the release on all of them.
+//! Inside this window, since `v0.16` (madde 2, plan v0.7). mpv is still a
+//! separate process over JSON IPC; it is handed the window's handle and draws
+//! as a child of it, and the player's controls are a second, transparent
+//! webview laid on top. [`surface`] holds the sequencing that makes that work,
+//! and the fallback -- mpv's own window -- where it cannot.
 //!
 //! ## Nothing is reported anywhere
 //!
@@ -43,9 +43,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![forbid(unsafe_code)]
 
+mod buffer;
 mod commands;
 mod http;
 mod state;
+mod surface;
 mod torrents;
 mod view;
 
@@ -115,6 +117,10 @@ fn window(play: Option<String>) {
 
     let app = tauri::Builder::default()
         .manage(Arc::clone(&session))
+        .setup(|app| {
+            surface::install(app.handle());
+            Ok(())
+        })
         // The whole IPC surface. Nothing is registered that is not in
         // `commands.rs`, which is the point of keeping it in one file.
         .invoke_handler(tauri::generate_handler![
@@ -132,6 +138,7 @@ fn window(play: Option<String>) {
             commands::row_items,
             commands::search,
             commands::detail,
+            commands::feature,
             commands::sources,
             commands::library_save,
             commands::library_remove,
@@ -139,6 +146,8 @@ fn window(play: Option<String>) {
             commands::play,
             commands::play_link,
             commands::player,
+            commands::tracks,
+            commands::buffer_clear,
             commands::settings,
             commands::settings_set,
         ])

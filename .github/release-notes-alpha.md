@@ -55,8 +55,8 @@ today is nothing. There is no flag that skips verification.
 - **The window does not do everything the prompt does.** Modules, the update
   check, subtitle search by hand, track selection and `eon://` deep links are
   in `eon-stream-cli` only.
-- **Video plays in mpv's own window**, not inside the application (madde 2).
-  Controls are in the EON Stream window; the picture is in mpv's.
+- **Playing inside the window is Windows-only so far.** mpv draws into the
+  EON Stream window there; it has not been checked anywhere else yet.
 - **YouTube sources** are handed to mpv's `ytdl` hook, so they need `yt-dlp`
   installed; without it they will not open.
 - **BitTorrent v2** magnet links (`btmh`) are refused by name. This build reads
@@ -66,7 +66,8 @@ today is nothing. There is no flag that skips verification.
 
 ### You need mpv
 
-Playback is mpv in its own window, driven over JSON IPC. Install it:
+Playback is mpv, running as its own process and drawing inside the EON Stream
+window, driven over JSON IPC. Install it:
 
 ```powershell
 winget install shinchiro.mpv

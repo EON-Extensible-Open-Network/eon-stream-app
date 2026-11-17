@@ -6,10 +6,18 @@ SPDX-FileCopyrightText: 2026 EON contributors
 Additional permission under GNU GPL version 3 section 7:
 see LICENSE-EXCEPTION.md (EON Module ABI Exception 1.0).
 
-The interface. Static HTML, CSS and JavaScript -- no framework, no bundler, no
+The catalogue. Static HTML, CSS and JavaScript -- no framework, no bundler, no
 Node. Everything a person reads here is empty in this file and filled from the
 message catalogue at startup (madde 40): a `data-say` attribute names a key,
-and a label with text baked into it would be a label nobody can translate.
+`data-label` names one for an aria-label, and a label with text baked into it
+would be a label nobody can translate.
+
+Every path in this file is relative, and nothing here assumes where it is
+served from. That is deliberate: see "The interface is relocatable" in
+docs/architecture.md.
+
+The player is not in this page. It is `player.html`, a second webview laid
+over mpv's picture while something plays; see src-tauri/src/surface.rs.
 -->
 <html lang="en">
   <head>
@@ -19,100 +27,113 @@ and a label with text baked into it would be a label nobody can translate.
     <link rel="stylesheet" href="app.css" />
   </head>
   <body>
-    <div class="shell">
-      <nav class="rail">
-        <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <button class="tab" data-view="home" data-say="ui.nav.home"></button>
-        <button class="tab" data-view="search" data-say="ui.nav.search"></button>
-        <button class="tab" data-view="library" data-say="ui.nav.library"></button>
-        <button class="tab" data-view="addons" data-say="ui.nav.addons"></button>
-        <button class="tab" data-view="settings" data-say="ui.nav.settings"></button>
-        <div class="rail-foot">
-          <select id="language" aria-label="language"></select>
-          <span id="version" class="muted"></span>
-        </div>
+    <header class="nav" id="nav">
+      <button class="brand" type="button" data-go="home" data-label="ui.nav.home">
+        <span class="mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <span class="wordmark" aria-hidden="true">EON<b>Stream</b></span>
+      </button>
+      <nav class="links" data-label="ui.nav.menu">
+        <button class="link" type="button" data-go="home" data-say="ui.nav.home"></button>
+        <button class="link" type="button" data-go="series" data-say="ui.nav.series"></button>
+        <button class="link" type="button" data-go="movie" data-say="ui.nav.movies"></button>
+        <button class="link" type="button" data-go="library" data-say="ui.nav.library"></button>
+        <button class="link" type="button" data-go="addons" data-say="ui.nav.addons"></button>
       </nav>
+      <div class="nav-tools">
+        <form id="search-form" class="searchbox" role="search">
+          <button type="submit" class="icon-button" data-icon="search" data-label="ui.action.search"></button>
+          <input id="search-input" type="search" autocomplete="off" spellcheck="false" />
+        </form>
+        <button id="link-open" class="icon-button" type="button" data-icon="link" data-label="ui.action.openlink"></button>
+        <button class="icon-button" type="button" data-go="settings" data-icon="settings" data-label="ui.nav.settings"></button>
+      </div>
+    </header>
 
-      <main>
-        <header class="topbar">
-          <form id="search-form">
-            <input id="search-input" type="search" autocomplete="off" />
-            <button type="submit" data-say="ui.action.search"></button>
-          </form>
-          <form id="link-form">
-            <input id="link-input" type="text" autocomplete="off" />
-            <button type="submit" data-say="ui.action.open"></button>
-          </form>
-        </header>
-
-        <section class="view" id="view-home">
-          <div id="home-empty" class="empty" hidden>
-            <h2 data-say="ui.empty.title"></h2>
-            <p data-say="ui.empty.body"></p>
-            <button id="empty-add" data-say="ui.empty.action"></button>
+    <main id="main">
+      <section class="view" id="view-home">
+        <div id="hero" class="hero" hidden>
+          <div class="hero-art" id="hero-art"></div>
+          <div class="hero-shade"></div>
+          <div class="hero-body">
+            <h1 id="hero-title" class="hero-title"></h1>
+            <div id="hero-facts" class="facts"></div>
+            <p id="hero-text" class="hero-text"></p>
+            <div class="hero-actions">
+              <button id="hero-play" class="button play" type="button" data-icon="play" data-say="ui.hero.play"></button>
+              <button id="hero-info" class="button ghost" type="button" data-icon="info" data-say="ui.hero.info"></button>
+            </div>
           </div>
-          <div id="rows"></div>
-        </section>
+        </div>
+        <div id="home-empty" class="empty" hidden>
+          <span class="mark big" aria-hidden="true"><span></span><span></span><span></span></span>
+          <h2 data-say="ui.empty.title"></h2>
+          <p data-say="ui.empty.body"></p>
+          <button id="empty-add" class="button play" type="button" data-icon="plus" data-say="ui.empty.action"></button>
+        </div>
+        <div id="rows" class="rows"></div>
+      </section>
 
-        <section class="view" id="view-search" hidden>
-          <h2 id="search-heading"></h2>
-          <p id="search-correction" class="correction" hidden></p>
-          <div id="search-grid" class="grid"></div>
-        </section>
+      <section class="view page" id="view-search" hidden>
+        <h2 id="search-heading" class="page-title"></h2>
+        <p id="search-correction" class="correction" hidden></p>
+        <div id="search-grid" class="grid"></div>
+      </section>
 
-        <section class="view" id="view-library" hidden>
-          <h2 data-say="ui.nav.library"></h2>
-          <div id="library-grid" class="grid"></div>
-        </section>
+      <section class="view page" id="view-library" hidden>
+        <h2 class="page-title" data-say="ui.nav.library"></h2>
+        <div id="library-grid" class="grid"></div>
+      </section>
 
-        <section class="view" id="view-detail" hidden>
-          <button class="back" data-say="ui.action.back"></button>
-          <div id="detail"></div>
-        </section>
+      <section class="view" id="view-detail" hidden>
+        <div id="detail"></div>
+      </section>
 
-        <section class="view" id="view-addons" hidden>
-          <h2 data-say="ui.nav.addons"></h2>
-          <p class="muted" data-say="ui.addons.note"></p>
-          <form id="addon-form">
-            <input id="addon-input" type="text" autocomplete="off" />
-            <button type="submit" data-say="ui.action.install"></button>
-          </form>
-          <div id="addon-list"></div>
-        </section>
+      <section class="view page" id="view-addons" hidden>
+        <h2 class="page-title" data-say="ui.nav.addons"></h2>
+        <p class="lede" data-say="ui.addons.note"></p>
+        <form id="addon-form" class="inline-form">
+          <input id="addon-input" type="url" autocomplete="off" spellcheck="false" />
+          <button class="button play" type="submit" data-icon="plus" data-say="ui.action.install"></button>
+        </form>
+        <div id="addon-list" class="stack"></div>
+      </section>
 
-        <section class="view" id="view-settings" hidden>
-          <h2 data-say="ui.nav.settings"></h2>
-          <div id="settings-form"></div>
-          <h3 data-say="ui.about.title"></h3>
-          <div id="about"></div>
-        </section>
-      </main>
-    </div>
+      <section class="view page" id="view-settings" hidden>
+        <h2 class="page-title" data-say="ui.nav.settings"></h2>
+        <div id="settings-form" class="settings"></div>
+      </section>
+    </main>
 
-    <div id="playbar" hidden>
-      <div class="playing">
-        <strong id="playing-name"></strong>
-        <span id="playing-clock" class="muted"></span>
+    <!-- What a viewer sees between pressing play and the first frame: a torrent
+         can take a minute to find its swarm, and a catalogue that just sits
+         there looks like nothing happened. -->
+    <div id="loading" class="loading" hidden>
+      <div class="loading-art" id="loading-art"></div>
+      <button id="loading-back" class="icon-button loading-back" type="button" data-icon="arrowLeft" data-label="ui.action.back"></button>
+      <div class="loading-body">
+        <div class="ring" aria-hidden="true"></div>
+        <h2 id="loading-title"></h2>
+        <p id="loading-stage" class="loading-stage" role="status"></p>
+        <p id="loading-detail" class="muted"></p>
+        <div class="meter"><i id="loading-meter"></i></div>
+        <p id="loading-torrent" class="muted small"></p>
       </div>
-      <div class="controls">
-        <button data-player="seek" data-value="-60">−60</button>
-        <button data-player="seek" data-value="-10">−10</button>
-        <button data-player="toggle" data-say="ui.player.toggle"></button>
-        <button data-player="seek" data-value="10">+10</button>
-        <button data-player="seek" data-value="60">+60</button>
-        <button data-player="stop" data-say="ui.player.stop"></button>
-      </div>
-      <div class="progress"><div id="playing-bar"></div></div>
-      <div id="torrents" class="torrents"></div>
     </div>
 
-    <div id="job" hidden>
-      <span id="job-text"></span>
-      <span id="job-detail" class="muted"></span>
+    <div id="link-dialog" class="dialog" hidden>
+      <form id="link-form" class="dialog-card">
+        <h3 data-say="ui.action.openlink"></h3>
+        <input id="link-input" type="text" autocomplete="off" spellcheck="false" />
+        <div class="dialog-actions">
+          <button id="link-cancel" class="button ghost" type="button" data-say="ui.action.close"></button>
+          <button class="button play" type="submit" data-icon="play" data-say="ui.action.play"></button>
+        </div>
+      </form>
     </div>
 
-    <div id="toast" hidden></div>
+    <div id="toast" class="toast" role="status" hidden></div>
 
+    <script src="icons.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -15,6 +15,51 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.16] — 2026-11-17 — the picture is in the window
+
+The window now looks like a place to watch things, and the video plays in it.
+
+### Changed
+- **Video plays inside the EON Stream window** (madde 2, plan v0.7). mpv is still a
+  separate process over JSON IPC; it is handed the window's handle with `--wid`, and the
+  controls are a transparent second webview laid over its picture. Windows only so far;
+  elsewhere mpv keeps its own window. Needs Tauri's `unstable` feature, for two webviews in
+  one window.
+- **A new layout, on the pattern people already know from streaming services**: a bar
+  across the top (Home, Series, Movies, Library, Addons, search, play a link, settings), a
+  billboard with Play and More info, and rows of posters. EON's own colours throughout —
+  the cyan-to-violet of the icon on ink-blue black.
+- **Rows page sideways.** Arrow bubbles at either end turn one page, a mouse can grab and
+  drag a row, and the dashes above it say which page is showing. Reaching the end asks the
+  addon for its next page, so a row is as long as the catalogue.
+- **The player** has the controls a viewer expects, drawn as icons: play/pause, back and
+  forward 10 and 60 seconds, volume, stop, audio and subtitle tracks, speed, fullscreen, a
+  timeline you can scrub, and keyboard shortcuts. They fade after three seconds of
+  stillness and do not exist at all when nothing is playing.
+- **Settings offer choices instead of text boxes.** Languages are picked from a list —
+  typing narrows it, only a click chooses, and nothing that is not a language can be
+  saved. Sizes, limits and peer counts are lists of values that work; booleans are
+  switches. The interface language moved here from the corner of the window.
+- Row titles are the catalogue's own name; the type and the addon are named beside it in
+  the interface's language, instead of `movie` joined into the title.
+
+### Added
+- **A film's page lists its sources, filtered by dub and by subtitles** as well as by
+  quality. Each filter offers only what the list holds, with how many of each, and a
+  source names its audio and subtitle languages.
+- **Clear buffer**, in Settings: deletes downloaded torrent pieces and says how much it
+  freed. The default folder beside the program is removed whole; a folder the viewer
+  chose only loses the torrents this session holds — it could be their Downloads folder.
+  Refused while something plays.
+- A loading screen between Play and the first frame, with the buffering progress.
+- The volume setting is applied when mpv starts.
+
+### Fixed
+- **Long titles no longer push cards out of line**: a name is two lines tall at most and
+  ends with an ellipsis, on every card.
+- The preferred-audio and lowest-quality settings showed as empty in the window: they were
+  read under the wrong keys.
+
 ## [v0.15] — 2026-11-17
 
 Two things `v0.14` shipped wrong, found where this project keeps finding them: by

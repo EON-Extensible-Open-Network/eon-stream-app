@@ -150,11 +150,19 @@ pub fn resolve(
             // can be read and would lock the job mutex for nothing.
             if last.elapsed() >= Duration::from_millis(500) {
                 last = Instant::now();
-                report(
-                    job,
-                    "ui.job.buffering",
-                    format!("{} / {}", format_size(have), format_size(want)),
-                );
+                #[allow(clippy::cast_precision_loss)]
+                let fraction = if want == 0 {
+                    0.0
+                } else {
+                    have as f64 / want as f64
+                };
+                if let Ok(mut job) = job.lock() {
+                    job.at_fraction(
+                        "ui.job.buffering",
+                        format!("{} / {}", format_size(have), format_size(want)),
+                        fraction,
+                    );
+                }
             }
             true
         })

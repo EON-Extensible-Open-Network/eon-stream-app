@@ -1,0 +1,457 @@
+/*
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: 2026 EON contributors
+
+Additional permission under GNU GPL version 3 section 7:
+see LICENSE-EXCEPTION.md (EON Module ABI Exception 1.0).
+
+The player's controls, over the picture.
+
+The page itself is transparent -- mpv's picture is underneath it -- so every
+control sits on a shade that fades in with it, and nothing is drawn at all
+while the viewer is just watching. Same palette as the catalogue (app.css):
+white for the controls, EON's cyan-to-violet for the played part of the
+timeline.
+*/
+
+:root {
+  --text: #f1f4f9;
+  --muted: #c4ccd8;
+  --accent: #7adcff;
+  --accent-2: #968bff;
+  --aurora: linear-gradient(90deg, var(--accent), var(--accent-2));
+  --panel: rgba(21, 27, 38, 0.94);
+  --line: rgba(255, 255, 255, 0.14);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  color: var(--text);
+  font: 15px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+body.sleep {
+  cursor: none;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* The whole picture is a click target: one click pauses, two go fullscreen. */
+.stage {
+  position: fixed;
+  inset: 0;
+}
+
+/* --------------------------------------------------------------- the shade */
+
+.top,
+.bottom {
+  position: fixed;
+  left: 0;
+  right: 0;
+  padding: 0 clamp(18px, 3vw, 44px);
+  transition: opacity 0.35s var(--ease);
+}
+
+.top {
+  top: 0;
+  height: 120px;
+  padding-top: 22px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0));
+  pointer-events: none;
+}
+
+.top .control {
+  pointer-events: auto;
+}
+
+.bottom {
+  bottom: 0;
+  padding-bottom: 18px;
+  padding-top: 70px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.55) 55%, rgba(0, 0, 0, 0) 100%);
+}
+
+body.sleep .top,
+body.sleep .bottom {
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.sleep .top .control {
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- controls */
+
+.control {
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  color: var(--text);
+  transition: transform 0.15s var(--ease), color 0.15s;
+}
+
+.control .icon {
+  width: 30px;
+  height: 30px;
+}
+
+.control.big .icon {
+  width: 36px;
+  height: 36px;
+}
+
+.control:hover {
+  transform: scale(1.18);
+}
+
+.control:active {
+  transform: scale(1.05);
+}
+
+.bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  margin-top: 12px;
+}
+
+.cluster {
+  display: flex;
+  align-items: center;
+  gap: clamp(6px, 1.2vw, 18px);
+  min-width: 0;
+}
+
+.cluster.right {
+  justify-content: flex-end;
+}
+
+.title {
+  max-width: 42vw;
+  font-size: 17px;
+  font-weight: 650;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clock {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  margin-left: 6px;
+}
+
+/* Volume: the slider slides out of the speaker on hover or focus. */
+.volume {
+  display: flex;
+  align-items: center;
+}
+
+.volume input {
+  width: 0;
+  opacity: 0;
+  accent-color: var(--accent);
+  transition: width 0.25s var(--ease), opacity 0.2s;
+}
+
+.volume:hover input,
+.volume:focus-within input {
+  width: 110px;
+  opacity: 1;
+  margin: 0 6px;
+}
+
+/* ---------------------------------------------------------------- timeline */
+
+.timeline {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.scrub {
+  position: relative;
+  flex: 1;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.rail {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.25);
+  overflow: hidden;
+  transition: height 0.15s;
+}
+
+.scrub:hover .rail,
+.scrub.dragging .rail,
+.scrub:focus-visible .rail {
+  height: 7px;
+}
+
+.buffered,
+.played {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+}
+
+.buffered {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.played {
+  background: var(--aurora);
+}
+
+.thumb {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(122, 220, 255, 0.35);
+  transform: scale(0.8);
+  transition: transform 0.15s;
+}
+
+.scrub:hover .thumb,
+.scrub.dragging .thumb {
+  transform: scale(1.1);
+}
+
+.hover-time {
+  position: absolute;
+  bottom: 26px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.82);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.remaining {
+  min-width: 70px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ center */
+
+.center {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.spinner {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 5px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--accent);
+  border-right-color: var(--accent-2);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The play or pause glyph that blooms in the middle when the state changes,
+   so a click on the picture visibly did something. */
+.flash {
+  grid-area: 1 / 1;
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0;
+}
+
+.flash .icon {
+  width: 48px;
+  height: 48px;
+}
+
+.flash.go {
+  animation: bloom 0.6s var(--ease);
+}
+
+@keyframes bloom {
+  from {
+    opacity: 1;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+
+/* ------------------------------------------------------------------ panels */
+
+.panel {
+  position: fixed;
+  right: clamp(18px, 3vw, 44px);
+  bottom: 130px;
+  z-index: 5;
+  padding: 18px 22px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+.panel h3 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.tracks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 260px));
+  gap: 28px;
+}
+
+.tracks ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.tracks li button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  text-align: left;
+}
+
+.tracks li button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.tracks li button .icon {
+  width: 18px;
+  height: 18px;
+  visibility: hidden;
+}
+
+.tracks li button[aria-checked="true"] {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.tracks li button[aria-checked="true"] .icon {
+  visibility: visible;
+  color: var(--accent);
+}
+
+.speed-list {
+  display: flex;
+  gap: 6px;
+}
+
+.speed-list button {
+  min-width: 64px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.speed-list button:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
+.speed-list button[aria-checked="true"] {
+  background: var(--text);
+  color: #05070b;
+  font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .title {
+    display: none;
+  }
+  .bar {
+    grid-template-columns: 1fr auto;
+  }
+  .clock {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

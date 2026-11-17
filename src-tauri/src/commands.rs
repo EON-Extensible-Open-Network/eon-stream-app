@@ -43,6 +43,7 @@ use crate::{
     torrents,
     view::{
         self, AboutView, AddonView, DetailView, RowView, SearchView, SettingsView, SourcesView,
+        TrackView,
     },
 };
 
@@ -142,7 +143,14 @@ pub async fn language_set(state: State<'_, Shared>, code: String) -> Out<Strings
 
 #[tauri::command]
 pub async fn status(state: State<'_, Shared>) -> Out<view::StatusView> {
-    with_session(&state, |session| Ok(view::status(session))).await
+    let status = with_session(&state, |session| Ok(view::status(session))).await?;
+    // mpv closes itself at the end of a file, or when it fails. Whichever
+    // webview notices first takes the controls down, so the catalogue is
+    // uncovered rather than left under a player with nothing in it.
+    if !status.player.running && !status.job.active {
+        crate::surface::close_controls();
+    }
+    Ok(status)
 }
 
 #[tauri::command]
@@ -274,6 +282,20 @@ pub async fn search(state: State<'_, Shared>, query: String) -> Out<SearchView> 
 pub async fn detail(state: State<'_, Shared>, content_type: String, id: String) -> Out<DetailView> {
     with_session(&state, move |session| {
         view::detail(session, &content_type, &id)
+    })
+    .await
+}
+
+/// The billboard on the home screen: one item's artwork and blurb, looked up
+/// without becoming the item the viewer is looking at.
+#[tauri::command]
+pub async fn feature(
+    state: State<'_, Shared>,
+    content_type: String,
+    id: String,
+) -> Out<DetailView> {
+    with_session(&state, move |session| {
+        view::feature(session, &content_type, &id)
     })
     .await
 }
@@ -477,7 +499,13 @@ pub fn play_link_now(shared: &Shared, link: &str) -> Out<()> {
 /// here; an unknown one is an error rather than a silent no-op.
 #[tauri::command]
 pub async fn player(state: State<'_, Shared>, action: String, value: Option<f64>) -> Out<()> {
-    with_session(&state, move |session| {
+    if action == "fullscreen" {
+        // The window's business, not mpv's: the picture is a child of the
+        // window and follows its size.
+        return crate::surface::toggle_fullscreen().map(|_| ());
+    }
+    let stopping = action == "stop";
+    let result = with_session(&state, move |session| {
         if action == "stop" {
             session.remember_position();
             if let Some(player) = session.player.take() {
@@ -507,11 +535,45 @@ pub async fn player(state: State<'_, Shared>, action: String, value: Option<f64>
             "speed" => player.set_speed(amount),
             "subtitles-on" => player.set_subtitles_visible(true),
             "subtitles-off" => player.set_subtitles_visible(false),
+            "mute" => {
+                let muted = player
+                    .get_property("mute")
+                    .map(|value| value == "true")
+                    .unwrap_or_default();
+                player.set_property("mute", if muted { "no" } else { "yes" })
+            }
+            // A negative id is "none", which for subtitles means off.
+            "audio" | "sub" => {
+                let id = if amount < 0.0 {
+                    None
+                } else {
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    Some(amount as u32)
+                };
+                player.select_track(&action, id)
+            }
             other => return Err(format!("{other} is not a player action")),
         };
         result.map_err(|e| e.to_string())
     })
-    .await
+    .await;
+    if stopping {
+        // After the lock, because it waits on the window's own thread.
+        crate::surface::close_controls();
+    }
+    result
+}
+
+/// The audio and subtitle tracks of what is playing, for the player's menu.
+#[tauri::command]
+pub async fn tracks(state: State<'_, Shared>) -> Out<Vec<TrackView>> {
+    with_session(&state, view::tracks).await
+}
+
+/// Delete the torrent pieces on disk. Answers how many bytes that freed.
+#[tauri::command]
+pub async fn buffer_clear(state: State<'_, Shared>) -> Out<u64> {
+    with_session(&state, crate::buffer::clear).await
 }
 
 // ------------------------------------------------------------------ settings
@@ -688,6 +750,10 @@ fn launch(
     subtitles: Vec<String>,
     playing: Option<NowPlaying>,
 ) -> Out<()> {
+    // Before the lock: on a `--play` start this can wait for the window to be
+    // built, and nothing else should wait on that.
+    let mut extra_args = crate::surface::mpv_arguments();
+
     let mut session = shared
         .lock()
         .map_err(|_| "the host lost track of its own state".to_owned())?;
@@ -696,6 +762,9 @@ fn launch(
     if let Some(existing) = session.player.take() {
         let _ = existing.quit();
     }
+
+    // The volume the viewer set, rather than mpv's own default of 100.
+    extra_args.push(format!("--volume={}", session.settings.playback.volume));
 
     let resume = playing
         .as_ref()
@@ -711,6 +780,7 @@ fn launch(
         http_headers: headers,
         subtitle_urls: subtitles,
         start_at_secs: resume,
+        extra_args,
         ..PlayerOptions::default()
     };
 
@@ -721,6 +791,11 @@ fn launch(
             if let Ok(mut job) = session.job.lock() {
                 job.done();
             }
+            // The controls go on after mpv's surface exists, so they land on
+            // top of it -- see `surface`. Not under the lock: laying them on
+            // waits for the window's own thread.
+            drop(session);
+            crate::surface::open_controls();
             Ok(())
         }
         Err(e) => {

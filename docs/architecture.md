@@ -32,18 +32,61 @@ The interface also has **no network permission at all** — no plugin is enabled
 forbids it, and CI fails the build if a `fetch` appears in `src/`. Every request it causes is
 a command in `src-tauri/src/commands.rs`, where the whole surface is enumerated in one file.
 
-## Player: separate process in v1
+## Player: a separate process, drawing inside the window
 
 The risky part of mpv is not compiling it. It is managing a native video surface — a child
 HWND on Windows, an NSView on macOS, X11/Wayland on Linux — beneath or above the system
 webview, and compositing the interface onto it. Z-order and transparency there are a known
 ordeal, and getting it wrong on one platform blocks the release on all of them.
 
-So: **v1 runs mpv as a separate process** over JSON IPC. Controls in the EON Stream window, video
-in the mpv window (madde 2).
+**mpv is still a separate process over JSON IPC** (madde 2). Since `v0.16` it draws inside the
+EON Stream window rather than in a window of its own (plan v0.7), and it got there without
+libmpv and without `unsafe`, by sequencing three surfaces (`src-tauri/src/surface.rs`):
 
-Embedding is a later, independent slice behind `eon-stream-engine`'s `embedded-mpv` feature. If it
-never works, v1 behaviour stands rather than the release stalling. On mobile the backend is
+1. mpv is launched with `--wid=<the window's handle>` and makes its picture a child of the
+   window. Windows places it *beneath* the catalogue webview — measured during playback,
+   not assumed.
+2. A second, transparent webview (`src/player.html`) is added after that, so it is on top of
+   both. It carries the controls and nothing else, and only exists while something plays.
+3. The catalogue webview is hidden for as long as the controls are up, so what shows through
+   the transparent page is mpv's picture. When playback ends either way — Stop, the end of
+   the file, mpv dying — the control webview is closed and the catalogue shown again, exactly
+   as it was left.
+
+Measured on Windows only. Where the handle cannot be had, `surface::mpv_arguments` returns
+nothing and mpv opens its own window, which is the pre-`v0.16` behaviour and still works.
+Two webviews in one window need Tauri's `unstable` feature; that is a dependency on an API
+that can change under a Tauri upgrade, so an upgrade is not done without playing something.
+
+Embedding libmpv stays a later, independent slice behind `eon-stream-engine`'s `embedded-mpv`
+feature, for the platforms where `--wid` will not do (Android first).
+
+## The interface is relocatable
+
+The owner asked that the whole interface be fetchable from the web without shipping a new
+binary, or that the project be able to get there at once. Today it is **compiled in** — the
+files in `src/` are embedded at build time — and it is kept in a shape where moving it is a
+configuration change, not a rewrite:
+
+- `src/` is plain static files with **relative paths only**: no build step, no bundler, no
+  absolute URL, no inline script (the CSP forbids it). Copy the folder to any HTTPS origin and
+  it is the same interface.
+- Its **only** way to the host is `window.__TAURI__.core.invoke` with the commands in
+  `commands.rs`. It has no network permission of its own (CI fails on a `fetch`), so where it
+  is served from changes nothing about what it can do.
+- No sentence lives in `src/`: every label comes from the catalogue the host serves
+  (madde 40), so a remote copy cannot drift from the binary's language files.
+
+Switching is three edits in one commit: the window's URL in `tauri.conf.json` becomes the remote
+origin; `capabilities/default.json` gains a `remote.urls` entry for exactly that origin; and
+the CSP's `default-src`/`script-src`/`style-src` name it.
+
+It is **not switched on**, and doing it is a plan decision rather than a convenience, because
+a page served from elsewhere is code nobody here built, holding every command in
+`commands.rs`. The precondition is the same one modules have: a **signed** interface bundle
+verified against the trust set before it is loaded (madde 3, 30, 37). With an empty trust set
+the honest answer is that it cannot be done safely yet. It must also never apply to the Edu
+build (madde 22): an institution's window does not load code from our origin. On mobile the backend is
 expected to be media3/ExoPlayer entirely — which is why `PlayerBackend` is an interface from
 the start, not a refactor waiting to happen.
 

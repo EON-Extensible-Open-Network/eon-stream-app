@@ -25,10 +25,10 @@ tauri-build = { version = "2", features = [] }
 # The desktop shell, decided in madde 2. The webview is the system's own --
 # WebView2 on Windows -- so this adds a renderer we do not ship and do not
 # update.
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["unstable"] }
 # Decisions, protocol, signatures, settings, i18n. No GUI dependency reaches
 # the other side of this line (madde 32c).
-eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "51219e3b4c755d676f097b17cbe008ee378ae20c" }
+eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "93f230e10bbcb3c62ec9af880b6d060ea65a001b" }
 # Torrents, the loopback server, and mpv over JSON IPC.
 eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "407103339c81777f6ecb912d169e78deb737ece6" }
 # The IPC surface is typed on both sides; these serialise it. Already in the

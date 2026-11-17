@@ -1,0 +1,93 @@
+<!doctype html>
+<!--
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: 2026 EON contributors
+
+Additional permission under GNU GPL version 3 section 7:
+see LICENSE-EXCEPTION.md (EON Module ABI Exception 1.0).
+
+The player's controls. This page is a transparent webview laid over mpv's
+picture while something plays (src-tauri/src/surface.rs), and exists only for
+that long: there are no playback controls anywhere when nothing is playing.
+
+The page draws no video and touches none. It reads the player's state from the
+host and sends it one action at a time, the same `player` command the
+headless build's prompt uses.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EON Stream</title>
+    <link rel="stylesheet" href="player.css" />
+  </head>
+  <body class="awake">
+    <div id="stage" class="stage"></div>
+
+    <header class="top">
+      <button id="back" class="control big" type="button" data-icon="arrowLeft" data-label="ui.player.back"></button>
+    </header>
+
+    <div id="center" class="center" aria-hidden="true">
+      <div id="spinner" class="spinner" hidden></div>
+      <div id="flash" class="flash"></div>
+    </div>
+
+    <footer class="bottom">
+      <div class="timeline">
+        <div id="scrub" class="scrub" role="slider" tabindex="0" aria-valuemin="0" data-label="ui.player.seek">
+          <div class="rail">
+            <div id="buffered" class="buffered"></div>
+            <div id="played" class="played"></div>
+          </div>
+          <div id="thumb" class="thumb"></div>
+          <div id="hover-time" class="hover-time" hidden></div>
+        </div>
+        <span id="remaining" class="remaining"></span>
+      </div>
+
+      <div class="bar">
+        <div class="cluster">
+          <button id="toggle" class="control big" type="button" data-icon="pause" data-label="ui.player.pause"></button>
+          <button class="control" type="button" data-seek="-10" data-icon="back" data-number="10" data-label="ui.player.back10"></button>
+          <button class="control" type="button" data-seek="10" data-icon="forward" data-number="10" data-label="ui.player.fwd10"></button>
+          <button class="control" type="button" data-seek="-60" data-icon="back" data-number="60" data-label="ui.player.back60"></button>
+          <button class="control" type="button" data-seek="60" data-icon="forward" data-number="60" data-label="ui.player.fwd60"></button>
+          <div class="volume">
+            <button id="mute" class="control" type="button" data-icon="volume" data-label="ui.player.mute"></button>
+            <input id="volume" type="range" min="0" max="130" step="1" data-label="ui.player.volume" />
+          </div>
+          <span id="clock" class="clock"></span>
+        </div>
+
+        <div id="title" class="title"></div>
+
+        <div class="cluster right">
+          <button id="stop" class="control" type="button" data-icon="stop" data-label="ui.player.stop"></button>
+          <button id="tracks-open" class="control" type="button" data-icon="subtitles" data-label="ui.player.tracks"></button>
+          <button id="speed-open" class="control" type="button" data-icon="speed" data-label="ui.player.speed"></button>
+          <button id="fullscreen" class="control" type="button" data-icon="fullscreen" data-label="ui.player.fullscreen"></button>
+        </div>
+      </div>
+    </footer>
+
+    <div id="tracks" class="panel tracks" hidden>
+      <div class="column">
+        <h3 data-say="ui.player.audio"></h3>
+        <ul id="audio-list"></ul>
+      </div>
+      <div class="column">
+        <h3 data-say="ui.player.subtitles"></h3>
+        <ul id="sub-list"></ul>
+      </div>
+    </div>
+
+    <div id="speed" class="panel speed" hidden>
+      <h3 data-say="ui.player.speed"></h3>
+      <div id="speed-list" class="speed-list"></div>
+    </div>
+
+    <script src="icons.js"></script>
+    <script src="player.js"></script>
+  </body>
+</html>

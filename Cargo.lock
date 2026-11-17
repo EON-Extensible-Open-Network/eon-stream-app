@@ -1203,7 +1203,7 @@ dependencies = [
 
 [[package]]
 name = "eon-stream-app"
-version = "0.15.0-alpha"
+version = "0.16.0-alpha"
 dependencies = [
  "eon-stream-core",
  "eon-stream-engine",
@@ -1216,7 +1216,7 @@ dependencies = [
 
 [[package]]
 name = "eon-stream-cli"
-version = "0.15.0-alpha"
+version = "0.16.0-alpha"
 dependencies = [
  "eon-stream-core",
  "eon-stream-engine",
@@ -1227,7 +1227,7 @@ dependencies = [
 [[package]]
 name = "eon-stream-core"
 version = "0.0.0"
-source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-core?rev=51219e3b4c755d676f097b17cbe008ee378ae20c#51219e3b4c755d676f097b17cbe008ee378ae20c"
+source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-core?rev=93f230e10bbcb3c62ec9af880b6d060ea65a001b#93f230e10bbcb3c62ec9af880b6d060ea65a001b"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",

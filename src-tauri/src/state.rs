@@ -90,6 +90,9 @@ pub struct Job {
     pub active: bool,
     pub stage: String,
     pub detail: String,
+    /// How far the current stage is, 0 to 1, when that is known. The prebuffer
+    /// is the stage it is known for, and the one a viewer waits on longest.
+    pub progress: Option<f64>,
     pub error: Option<String>,
 }
 
@@ -99,7 +102,13 @@ impl Job {
         self.active = true;
         self.stage = stage.to_owned();
         self.detail = detail;
+        self.progress = None;
         self.error = None;
+    }
+
+    pub fn at_fraction(&mut self, stage: &str, detail: String, fraction: f64) {
+        self.at(stage, detail);
+        self.progress = Some(fraction.clamp(0.0, 1.0));
     }
 
     /// Finished, with nothing to report.
@@ -107,6 +116,7 @@ impl Job {
         self.active = false;
         self.stage = String::new();
         self.detail = String::new();
+        self.progress = None;
         self.error = None;
     }
 
@@ -116,6 +126,7 @@ impl Job {
         self.active = false;
         self.stage = String::new();
         self.detail = String::new();
+        self.progress = None;
         self.error = Some(message);
     }
 }
