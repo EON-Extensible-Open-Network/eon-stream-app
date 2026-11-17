@@ -239,6 +239,7 @@ function go(target) {
     showView("home");
     renderHome();
   } else if (target === "new") openNew();
+  else if (target === "discover") openDiscover();
   else if (target === "library") openLibrary();
   else if (target === "addons") loadAddons();
   else if (target === "settings") loadSettings();
@@ -381,6 +382,8 @@ function continueActions(row) {
 
 async function loadRows() {
   const rows = await ask("rows");
+  // Discover indexes into this list: a new list is a new Discover.
+  DISCOVER.built = false;
   ROWS = rows.map((row) => ({
     ...row,
     // A catalogue row fetches itself; the others arrive filled.
@@ -690,9 +693,14 @@ function drawArt(art, background, poster) {
 
 // ------------------------------------------------------------------- search
 
-async function runSearch(query) {
+let SEARCH_TOKEN = 0;
+
+async function runSearch(query, typing = false) {
   if (!query.trim()) return;
-  showView("search");
+  const token = (SEARCH_TOKEN += 1);
+  // While typing, the page stays where it is: no jump to the top on every
+  // letter.
+  if (!typing || document.getElementById("view-search").hidden) showView("search");
   const grid = document.getElementById("search-grid");
   clear(grid);
   document.getElementById("search-heading").textContent = t("ui.search.heading", query);
@@ -701,11 +709,13 @@ async function runSearch(query) {
 
   let result;
   try {
-    result = await ask("search", { query });
+    result = typing ? await invoke("search", { query }) : await ask("search", { query });
   } catch (error) {
-    clear(grid);
+    if (token === SEARCH_TOKEN) clear(grid);
     return;
   }
+  // A slower answer to an earlier query is not drawn over a newer one.
+  if (token !== SEARCH_TOKEN) return;
   clear(grid);
 
   const correction = document.getElementById("search-correction");
@@ -721,17 +731,194 @@ async function runSearch(query) {
   if (result.failures.length) toast(result.failures.join("\n"));
 }
 
+// ------------------------------------------------------------------ discover
+
+/** Where Discover is: the choices, how far the grid has loaded, and whether
+ *  more is coming. Kept when the page is left, so going back to it from a
+ *  title is going back to where one was. */
+const DISCOVER = { type: null, row: null, genre: "", skip: 0, done: false, busy: false, token: 0, built: false };
+
+function discoverRows() {
+  return ROWS.filter((row) => row.kind === "catalog");
+}
+
+async function openDiscover() {
+  showView("discover");
+  if (!ROWS.length) await loadRows();
+  if (DISCOVER.built) return;
+  DISCOVER.built = true;
+  const rows = discoverRows();
+  const empty = document.getElementById("discover-empty");
+  if (rows.length === 0) {
+    empty.textContent = t("ui.discover.empty");
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  const typeSelect = document.getElementById("discover-type");
+  const catalogSelect = document.getElementById("discover-catalog");
+  const genreSelect = document.getElementById("discover-genre");
+
+  const types = [...new Set(rows.map((row) => row.content_type))];
+  // Films, then series, then whatever else the addons offer.
+  const rank = (type) => {
+    const at = ["movie", "series"].indexOf(type);
+    return at === -1 ? 9 : at;
+  };
+  types.sort((a, b) => rank(a) - rank(b));
+  clear(typeSelect);
+  for (const type of types) typeSelect.appendChild(el("option", { text: typeName(type), attrs: { value: type } }));
+
+  const fillCatalogs = () => {
+    clear(catalogSelect);
+    rows
+      .filter((row) => row.content_type === typeSelect.value)
+      .forEach((row) => {
+        catalogSelect.appendChild(el("option", { text: row.title, attrs: { value: String(ROWS.indexOf(row)) } }));
+      });
+  };
+  const fillGenres = () => {
+    const row = ROWS[Number(catalogSelect.value)];
+    clear(genreSelect);
+    if (!row.genre_required) genreSelect.appendChild(el("option", { text: t("ui.sources.any"), attrs: { value: "" } }));
+    for (const genre of row.genres) genreSelect.appendChild(el("option", { text: genre, attrs: { value: genre } }));
+    // A catalogue that cannot be narrowed has nothing to choose here.
+    genreSelect.closest(".pick").hidden = row.genres.length === 0;
+  };
+
+  typeSelect.addEventListener("change", () => {
+    fillCatalogs();
+    fillGenres();
+    restartDiscover();
+  });
+  catalogSelect.addEventListener("change", () => {
+    fillGenres();
+    restartDiscover();
+  });
+  genreSelect.addEventListener("change", restartDiscover);
+
+  fillCatalogs();
+  fillGenres();
+
+  // The next page when the end of the grid comes near.
+  const observer = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) moreDiscover();
+    },
+    { rootMargin: "600px 0px" }
+  );
+  observer.observe(document.getElementById("discover-more"));
+  restartDiscover();
+}
+
+function restartDiscover() {
+  const row = ROWS[Number(document.getElementById("discover-catalog").value)];
+  DISCOVER.row = row;
+  DISCOVER.genre = document.getElementById("discover-genre").value;
+  DISCOVER.skip = 0;
+  DISCOVER.done = false;
+  DISCOVER.busy = false;
+  DISCOVER.token += 1;
+  DISCOVER.seen = new Set();
+  clear(document.getElementById("discover-grid"));
+  moreDiscover();
+}
+
+async function moreDiscover() {
+  const row = DISCOVER.row;
+  if (!row || DISCOVER.busy || DISCOVER.done) return;
+  DISCOVER.busy = true;
+  const token = DISCOVER.token;
+  const grid = document.getElementById("discover-grid");
+  const waiting = el("div", { className: "spinner", text: t("ui.loading") });
+  grid.appendChild(waiting);
+  let items = [];
+  try {
+    items = await invoke("row_items", {
+      addonId: row.addon_id,
+      contentType: row.content_type,
+      catalogId: row.catalog_id,
+      skip: DISCOVER.skip,
+      query: null,
+      extra: DISCOVER.genre ? ["genre", DISCOVER.genre] : row.extra || null,
+    });
+  } catch (error) {
+    if (token === DISCOVER.token) toast(error);
+    items = [];
+  }
+  waiting.remove();
+  if (token !== DISCOVER.token) return;
+  DISCOVER.busy = false;
+  // An addon that ignores `skip` sends the first page again: nothing new
+  // means the end.
+  const fresh = items.filter((item) => !DISCOVER.seen.has(item.id));
+  for (const item of fresh) DISCOVER.seen.add(item.id);
+  DISCOVER.skip += items.length;
+  if (fresh.length === 0) {
+    DISCOVER.done = true;
+    if (grid.children.length === 0) grid.appendChild(el("div", { className: "spinner", text: t("ui.discover.nothing") }));
+    return;
+  }
+  const cards = document.createDocumentFragment();
+  for (const item of fresh) cards.appendChild(card(item));
+  grid.appendChild(cards);
+  // A short page may not reach the strip that asks for more: ask now.
+  const strip = document.getElementById("discover-more").getBoundingClientRect();
+  if (strip.top < window.innerHeight + 600) moreDiscover();
+}
+
+/** What the library page shows: which kind, in which order. */
+const LIBRARY = { kind: "", order: "recent" };
+
 async function openLibrary() {
   showView("library");
   const grid = document.getElementById("library-grid");
+  const kinds = document.getElementById("library-kinds");
+  const order = document.getElementById("library-order");
   clear(grid);
-  const rows = await ask("rows");
-  const library = rows.find((row) => row.kind === "library");
-  if (!library) {
+  const items = await ask("library", { order: LIBRARY.order });
+
+  clear(order);
+  for (const [value, key] of [
+    ["recent", "ui.library.recent"],
+    ["name", "ui.library.byname"],
+  ]) {
+    order.appendChild(el("option", { text: t(key), attrs: { value } }));
+  }
+  order.value = LIBRARY.order;
+  order.onchange = () => {
+    LIBRARY.order = order.value;
+    openLibrary();
+  };
+
+  // One chip per kind actually kept, and "any".
+  clear(kinds);
+  const present = [...new Set(items.map((item) => item.content_type))];
+  if (!present.includes(LIBRARY.kind)) LIBRARY.kind = "";
+  const chip = (value, text) => {
+    const button = el("button", {
+      className: "chip",
+      text,
+      attrs: { type: "button", "aria-pressed": String(LIBRARY.kind === value) },
+      onClick: () => {
+        LIBRARY.kind = value;
+        openLibrary();
+      },
+    });
+    kinds.appendChild(button);
+  };
+  chip("", t("ui.sources.any"));
+  if (present.length > 1) for (const kind of present) chip(kind, typeName(kind));
+  kinds.hidden = present.length < 2;
+
+  const shown = items.filter((item) => !LIBRARY.kind || item.content_type === LIBRARY.kind);
+  if (shown.length === 0) {
     grid.appendChild(el("div", { className: "spinner", text: t("ui.library.empty") }));
     return;
   }
-  for (const item of library.items) grid.appendChild(card(item));
+  const cards = document.createDocumentFragment();
+  for (const item of shown) cards.appendChild(card(item));
+  grid.appendChild(cards);
 }
 
 /** New & popular: the catalogues that call themselves trending, then the
@@ -1815,6 +2002,15 @@ async function boot() {
       return;
     }
     runSearch(searchInput.value);
+  });
+  // Results as the words are typed, once there are enough of them to mean
+  // something, and after a pause: every search asks every addon.
+  let typing = 0;
+  searchInput.addEventListener("input", () => {
+    clearTimeout(typing);
+    const query = searchInput.value.trim();
+    if (query.length < 2) return;
+    typing = setTimeout(() => runSearch(query, true), 450);
   });
   searchInput.addEventListener("blur", () => {
     if (!searchInput.value) searchForm.classList.remove("open");

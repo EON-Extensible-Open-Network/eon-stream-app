@@ -142,6 +142,7 @@ fn window(play: Option<String>) {
             commands::detail,
             commands::feature,
             commands::sources,
+            commands::library,
             commands::library_save,
             commands::library_remove,
             commands::history_forget,

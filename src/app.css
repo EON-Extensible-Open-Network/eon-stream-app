@@ -1680,6 +1680,33 @@ main {
   font-size: clamp(22px, 2vw, 28px);
 }
 
+/* ----------------------------------------------------------------- discover */
+
+.discover-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin: 4px 0 26px;
+}
+
+.pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.pick .sort-select {
+  max-width: 280px;
+}
+
+/* Where the next page is asked for: a strip below the last row of the grid
+   that, coming into view, loads more. */
+.discover-more {
+  height: 1px;
+  margin-top: 40px;
+}
+
 /* ---------------------------------------------------------- card and menu */
 
 .card-holder {

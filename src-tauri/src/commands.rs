@@ -402,6 +402,12 @@ pub async fn subtitle_languages(
 
 // ------------------------------------------------------------------- keeping
 
+/// The whole library, for its page.
+#[tauri::command]
+pub async fn library(state: State<'_, Shared>, order: String) -> Out<Vec<view::ItemView>> {
+    with_session(&state, move |session| Ok(view::library(session, &order))).await
+}
+
 #[tauri::command]
 pub async fn library_save(state: State<'_, Shared>, content_type: String, id: String) -> Out<bool> {
     with_session(&state, move |session| {

@@ -15,6 +15,27 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.2] — 2026-11-18 — discover, and a library that shows everything
+
+The twentieth alpha: `v0.19` is followed by `v0.2`, per the version scheme above.
+
+### Added
+- **Discover.** One catalogue at a time as a grid of posters, narrowed by content type,
+  catalogue and genre, that loads the next page as it is scrolled. Every choice on it is a
+  catalogue or a genre an addon declared: a catalogue that must be given a genre (Cinemeta's
+  "New" takes a year) offers no "any". Leaving it for a title and coming back returns to
+  the same place. An addon that ignores paging is noticed when a page brings nothing new,
+  instead of being asked for the same page forever.
+- **Search as you type.** Results arrive after a short pause once there are two letters,
+  without leaving the page or jumping to the top on every letter, and a slower answer to an
+  earlier query is never drawn over a newer one. Enter still searches at once.
+- **The library page can be sorted** — most recently added, or by name — and narrowed to
+  films or series when it holds both.
+
+### Fixed
+- **The library page showed at most 24 titles.** It was drawn from the home screen's
+  library row, which is the newest two dozen; it now asks for the whole library.
+
 ## [v0.19] — 2026-11-18 — one episode after another
 
 ### Added

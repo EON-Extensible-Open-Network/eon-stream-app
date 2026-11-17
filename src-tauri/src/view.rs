@@ -126,6 +126,11 @@ pub struct RowView {
     /// it is asked with -- the first the addon lists. Cinemeta's "New" needs
     /// a year.
     pub extra: Option<(String, String)>,
+    /// The genres the catalogue can be narrowed to, as the addon lists them,
+    /// for Discover. Empty when it lists none.
+    pub genres: Vec<String>,
+    /// Whether a genre must be picked: such a catalogue has no "all".
+    pub genre_required: bool,
     pub items: Vec<ItemView>,
 }
 
@@ -468,6 +473,8 @@ pub fn rows(session: &Session) -> Vec<RowView> {
             searchable: false,
             role: None,
             extra: None,
+            genres: Vec::new(),
+            genre_required: false,
             items: watching,
         });
     }
@@ -505,6 +512,8 @@ pub fn rows(session: &Session) -> Vec<RowView> {
             searchable: false,
             role: None,
             extra: None,
+            genres: Vec::new(),
+            genre_required: false,
             items: kept,
         });
     }
@@ -525,11 +534,55 @@ pub fn rows(session: &Session) -> Vec<RowView> {
                 searchable: catalog.is_searchable(),
                 role: role_of(catalog).map(ToOwned::to_owned),
                 extra,
+                genres: catalog
+                    .extra
+                    .iter()
+                    .find(|prop| prop.name == "genre")
+                    .map(|prop| prop.options.clone())
+                    .unwrap_or_default(),
+                genre_required: catalog
+                    .extra
+                    .iter()
+                    .any(|prop| prop.name == "genre" && prop.is_required),
                 items: Vec::new(),
             });
         }
     }
     rows
+}
+
+/// Everything kept, in the order asked for: `recent` or `name`.
+///
+/// The home screen's row shows the newest two dozen; this is the whole
+/// library, for its own page.
+#[must_use]
+pub fn library(session: &Session, order: &str) -> Vec<ItemView> {
+    let order = if order == "name" {
+        LibraryOrder::Name
+    } else {
+        LibraryOrder::Recent
+    };
+    session
+        .library
+        .list(order)
+        .into_iter()
+        .map(|entry| ItemView {
+            id: entry.id.clone(),
+            content_type: entry.content_type.clone(),
+            name: entry.name.clone(),
+            poster: entry.poster.clone(),
+            description: None,
+            year: entry.release_info.clone(),
+            rating: None,
+            in_library: true,
+            progress: session
+                .history
+                .get(&entry.content_type, &entry.id)
+                .and_then(eon_stream_core::WatchEntry::progress),
+            resume_at: None,
+            episode_label: None,
+        })
+        .collect()
 }
 
 /// The parameter a catalogue needs before it answers, if any.

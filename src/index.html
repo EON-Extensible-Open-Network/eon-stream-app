@@ -37,6 +37,7 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
         <button class="link" type="button" data-go="series" data-say="ui.nav.series"></button>
         <button class="link" type="button" data-go="movie" data-say="ui.nav.movies"></button>
         <button class="link" type="button" data-go="new" data-say="ui.nav.new"></button>
+        <button class="link" type="button" data-go="discover" data-say="ui.nav.discover"></button>
         <button class="link" type="button" data-go="library" data-say="ui.nav.library"></button>
         <button class="link" type="button" data-go="addons" data-say="ui.nav.addons"></button>
       </nav>
@@ -88,8 +89,27 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
         <div id="new-rows" class="rows"></div>
       </section>
 
+      <!-- Discover: one catalogue at a time, as a grid, narrowed by type and
+           genre, that keeps loading as it is scrolled. Every choice on it is a
+           catalogue or a genre an addon declared. -->
+      <section class="view page" id="view-discover" hidden>
+        <h2 class="page-title" data-say="ui.nav.discover"></h2>
+        <div class="discover-bar">
+          <label class="pick"><span data-say="ui.discover.type"></span><select id="discover-type" class="sort-select"></select></label>
+          <label class="pick"><span data-say="ui.discover.catalog"></span><select id="discover-catalog" class="sort-select"></select></label>
+          <label class="pick"><span data-say="ui.discover.genre"></span><select id="discover-genre" class="sort-select"></select></label>
+        </div>
+        <p id="discover-empty" class="lede" hidden></p>
+        <div id="discover-grid" class="grid"></div>
+        <div id="discover-more" class="discover-more" aria-hidden="true"></div>
+      </section>
+
       <section class="view page" id="view-library" hidden>
         <h2 class="page-title" data-say="ui.nav.library"></h2>
+        <div class="discover-bar">
+          <div id="library-kinds" class="chips" role="group"></div>
+          <label class="pick"><span data-say="ui.sources.sort"></span><select id="library-order" class="sort-select"></select></label>
+        </div>
         <div id="library-grid" class="grid"></div>
       </section>
 
