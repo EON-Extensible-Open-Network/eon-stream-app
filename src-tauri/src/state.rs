@@ -231,6 +231,8 @@ pub struct Session {
     pub tried: Vec<usize>,
     /// The viewer's own scores and reviews (madde 7: no account needed).
     pub ratings: crate::ratings::Ratings,
+    /// The community client's server and session, if the viewer set one.
+    pub community: crate::community::Community,
 }
 
 impl Session {
@@ -282,6 +284,7 @@ impl Session {
             starting_source: None,
             tried: Vec::new(),
             ratings: crate::ratings::Ratings::load(),
+            community: crate::community::Community::load(),
         }
     }
 

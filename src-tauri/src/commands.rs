@@ -546,6 +546,81 @@ pub async fn subtitle_languages(
 
 // ------------------------------------------------------------------- keeping
 
+/// Whether a community server is set, and who is signed in to it.
+#[tauri::command]
+pub async fn community_state(state: State<'_, Shared>) -> Out<crate::community::CommunityView> {
+    with_session(&state, |session| Ok(session.community.view())).await
+}
+
+/// Set the community server's address, or clear it with an empty one.
+#[tauri::command]
+pub async fn community_server(
+    state: State<'_, Shared>,
+    address: String,
+) -> Out<crate::community::CommunityView> {
+    with_session(&state, move |session| {
+        session
+            .community
+            .set_server(&address)
+            .map_err(|key| session.text(key))?;
+        Ok(session.community.view())
+    })
+    .await
+}
+
+/// One request to the community server, by the contract's method and path.
+///
+/// Signing in and out is noticed here, so the session token is kept on the
+/// host and never reaches the interface. Answers `{status, body}`.
+#[tauri::command]
+pub async fn community_request(
+    state: State<'_, Shared>,
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+) -> Out<serde_json::Value> {
+    let (m, p) = (method.clone(), path.clone());
+    with_network(
+        &state,
+        move |session| {
+            crate::community::prepare(&session.community, &method, &path, body)
+                .map_err(|key| session.text(key))
+        },
+        crate::community::send,
+        move |session, _, answer| {
+            let mut answer = answer?;
+            let ok = (200..300).contains(&answer.status);
+            let path = p.split('?').next().unwrap_or_default().to_owned();
+            if ok && m == "POST" && path == "/v0/sessions" {
+                let token = answer
+                    .body
+                    .get("token")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
+                let username = answer
+                    .body
+                    .get("username")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
+                if let (Some(token), Some(username)) = (token, username) {
+                    session.community.signed_in(token, username);
+                }
+                // The token stays here.
+                if let Some(object) = answer.body.as_object_mut() {
+                    object.remove("token");
+                }
+            }
+            let signed_out = (ok && m == "DELETE" && (path == "/v0/sessions" || path == "/v0/me"))
+                || answer.status == 401;
+            if signed_out {
+                session.community.signed_out();
+            }
+            Ok(serde_json::json!({ "status": answer.status, "body": answer.body }))
+        },
+    )
+    .await
+}
+
 /// The viewer's own score of a title, if they gave one.
 #[tauri::command]
 pub async fn rating_get(

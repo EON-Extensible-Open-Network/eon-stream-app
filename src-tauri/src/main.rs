@@ -45,6 +45,7 @@
 
 mod buffer;
 mod commands;
+mod community;
 mod http;
 mod keeper;
 mod ratings;
@@ -149,6 +150,9 @@ fn window(play: Option<String>) {
             commands::rating_get,
             commands::rating_set,
             commands::profile,
+            commands::community_state,
+            commands::community_server,
+            commands::community_request,
             commands::more_like,
             commands::calendar,
             commands::trailer,

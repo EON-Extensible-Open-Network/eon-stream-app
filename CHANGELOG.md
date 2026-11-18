@@ -15,6 +15,24 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.27] — 2026-11-18 — a community client, waiting for a community
+
+### Added
+- **Community**, against `eon-stream-spec/docs/community-api.md`: make an account
+  (username, e-mail, password — nothing else), sign in, share the scores and reviews you
+  give, see on a title's page what the community thinks (an average from three scores up,
+  and the reviews), find people by username, ask and accept friends, read a feed of your
+  friends' scores, report a review or a person, and see — or delete — everything held
+  about your account.
+- **It is dormant.** Nothing is sent until you enter a server address, and the page says
+  why there is no EON server: running one is held behind madde 30's Faz L1 gate, a legal
+  entity among its five conditions, because accounts and reviews are where the law's
+  obligations for a site begin. The plan change that would record this is open for the
+  owner's decision (eon-docs#1).
+- The server address must be `https://` (or this computer, for testing). The session
+  token is kept on the host in `eon-community.json` and never reaches the interface, which
+  can ask only for the paths the contract lists.
+
 ## [v0.26] — 2026-11-18 — your own scores, on your own machine
 
 ### Added

@@ -43,6 +43,7 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
         </button>
         <button class="link" type="button" data-go="library" data-say="ui.nav.library"></button>
         <button class="link" type="button" data-go="profile" data-say="ui.nav.profile"></button>
+        <button class="link" type="button" data-go="community" data-say="ui.nav.community"></button>
         <button class="link" type="button" data-go="addons" data-say="ui.nav.addons"></button>
       </nav>
       <div class="nav-tools">
@@ -125,6 +126,13 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
           <label class="pick"><span data-say="ui.sources.sort"></span><select id="profile-order" class="sort-select"></select></label>
         </div>
         <div id="profile-grid" class="grid"></div>
+      </section>
+
+      <!-- The community: shared scores, reviews and friends, against a server
+           the viewer chooses. Dormant until one is set (madde 7, 30). -->
+      <section class="view page" id="view-community" hidden>
+        <h2 class="page-title" data-say="ui.nav.community"></h2>
+        <div id="community-body" class="community"></div>
       </section>
 
       <section class="view page" id="view-library" hidden>

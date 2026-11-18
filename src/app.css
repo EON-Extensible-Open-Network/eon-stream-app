@@ -1725,6 +1725,90 @@ button.pill:focus-visible {
   display: none;
 }
 
+/* ---------------------------------------------------------------- community */
+
+.community {
+  display: grid;
+  gap: 18px;
+  max-width: 900px;
+}
+
+.auth {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 18px;
+}
+
+.auth-form {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.field input {
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.auth-form .button {
+  justify-self: start;
+}
+
+.score-line,
+.person {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px;
+  border-radius: var(--radius);
+}
+
+.score-line:hover,
+.person:hover {
+  background: var(--surface-2);
+}
+
+.score-line .grow,
+.person .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.score-line .title {
+  font-weight: 700;
+}
+
+.score-line .when {
+  color: #f5c518;
+  font-size: 14px;
+  margin-top: 2px;
+}
+
+.community-box {
+  margin-top: 36px;
+}
+
+.export {
+  max-height: 340px;
+  overflow: auto;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
 /* ------------------------------------------------------------------ ratings */
 
 .my-rating {
