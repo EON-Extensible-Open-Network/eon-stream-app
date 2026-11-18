@@ -18,8 +18,8 @@ path = "src/main.rs"
 # went green, not merely the newest one -- v0.12 shipped against a core commit
 # whose own workflow had failed to parse, which nobody would have noticed from
 # here.
-eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "8c166457d84fd57d3307105fdd85407cc6de1baf" }
-eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "407103339c81777f6ecb912d169e78deb737ece6" }
+eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "a447d26529c6bf716d90bc8ff2d0be3bc03f45ac" }
+eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "552fe34585fa4d7442f841fac39c2ba148dc848a" }
 ureq = "2"
 
 [dev-dependencies]

@@ -220,6 +220,8 @@ pub struct Session {
     /// what it said. Asking every series' addon on every visit to the home
     /// screen would be dozens of requests for an answer that changes daily.
     pub calendar: Option<(u64, String, crate::view::CalendarView)>,
+    /// The cache limit's bookkeeping for what is playing.
+    pub keeper: crate::keeper::Keeper,
 }
 
 impl Session {
@@ -266,6 +268,7 @@ impl Session {
             playing_torrent: None,
             subtitles: crate::subs::Found::default(),
             calendar: None,
+            keeper: crate::keeper::Keeper::default(),
         }
     }
 

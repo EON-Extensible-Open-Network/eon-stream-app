@@ -711,3 +711,20 @@ body.sleep .top .control {
   margin: 0;
   color: var(--muted);
 }
+
+/* Something the host has to say while playing: a line at the top. */
+.note {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 7;
+  max-width: min(640px, calc(100vw - 48px));
+  margin: 0;
+  padding: 12px 18px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-size: 14px;
+  line-height: 1.45;
+}

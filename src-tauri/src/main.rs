@@ -46,6 +46,7 @@
 mod buffer;
 mod commands;
 mod http;
+mod keeper;
 mod state;
 mod subs;
 mod surface;

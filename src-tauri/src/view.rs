@@ -345,6 +345,9 @@ pub struct StatusView {
     pub torrents: Vec<crate::torrents::TorrentView>,
     pub addons: usize,
     pub library: usize,
+    /// Something the host has to tell the viewer, once: the cache limit was
+    /// lowered to fit the disk.
+    pub notice: Option<String>,
 }
 
 /// The settings page.
@@ -363,6 +366,10 @@ pub struct SettingsView {
     pub languages: Vec<String>,
     /// Bytes of downloaded pieces on disk.
     pub buffer_bytes: u64,
+    /// Free space on the disk the cache is on, where it can be measured.
+    pub disk_free_bytes: Option<u64>,
+    /// The cache limit in force: the setting, or less if the disk has less.
+    pub cache_limit_bytes: u64,
 }
 
 /// The about page: what this build is and what it trusts.
@@ -1434,6 +1441,7 @@ pub fn status(session: &mut Session) -> StatusView {
         torrents: crate::torrents::snapshot(session.torrent.as_deref()),
         addons: session.registry.len(),
         library: session.library.len(),
+        notice: session.keeper.notice.take(),
     }
 }
 
@@ -1451,6 +1459,13 @@ pub fn settings(session: &Session) -> SettingsView {
         audit_found: found,
         languages: language::known().map(ToOwned::to_owned).collect(),
         buffer_bytes: crate::buffer::size(session),
+        disk_free_bytes: crate::buffer::free(session),
+        cache_limit_bytes: crate::keeper::budget(
+            session.settings.torrent.cache_limit_megabytes,
+            crate::buffer::free(session),
+            crate::buffer::size(session),
+        )
+        .0,
     }
 }
 

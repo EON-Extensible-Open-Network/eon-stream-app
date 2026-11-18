@@ -1861,7 +1861,10 @@ async function loadSettings() {
       const current = stored(view.settings, field);
       panel.appendChild(row(t(`ui.settings.${field.path}`), control(field, current, languages)));
     }
-    if (section.title === "ui.settings.section.torrent") panel.appendChild(bufferBox(view.buffer_bytes));
+    if (section.title === "ui.settings.section.torrent") {
+      panel.appendChild(cacheBox(view));
+      panel.appendChild(bufferBox(view.buffer_bytes));
+    }
     form.appendChild(panel);
   }
 
@@ -2086,6 +2089,43 @@ function languagePicker(chosen, known, onChange) {
 }
 
 /** How much the buffer holds, and the button that empties it. */
+/** The cache limit: how much disk the torrent cache may use. Only sizes the
+ *  disk can hold are offered, and what is free, what is used and the limit
+ *  in force are shown beside it. */
+function cacheBox(view) {
+  const GB = 1024 * 1024 * 1024;
+  const current = view.settings.torrent.cacheLimitMegabytes || 0;
+  const free = view.disk_free_bytes;
+  const room = free === null || free === undefined ? null : free + view.buffer_bytes - 2 * GB;
+  const select = el("select", { attrs: { "aria-label": t("ui.settings.torrent.cacheLimitMegabytes") } });
+  select.appendChild(el("option", { text: t("ui.cache.auto"), attrs: { value: "0" } }));
+  const sizes = [4, 8, 16, 32, 50, 75, 100, 150, 200, 300, 500, 1000];
+  for (const gb of sizes) {
+    if (room !== null && gb * GB > room) continue;
+    select.appendChild(el("option", { text: t("ui.cache.gb", gb), attrs: { value: String(gb * 1024) } }));
+  }
+  // A limit set before the disk filled up is still shown, marked.
+  if (current && ![...select.options].some((option) => option.value === String(current))) {
+    select.appendChild(
+      el("option", { text: t("ui.cache.toolarge", Math.round(current / 1024)), attrs: { value: String(current) } })
+    );
+  }
+  select.value = String(current);
+  select.addEventListener("change", () => save("torrent.cacheLimitMegabytes", select.value));
+  const facts = [
+    free === null || free === undefined ? null : t("ui.cache.free", bytes(free)),
+    t("ui.cache.used", bytes(view.buffer_bytes)),
+    t("ui.cache.limit", bytes(view.cache_limit_bytes)),
+  ].filter(Boolean);
+  return el("div", { className: "setting" }, [
+    el("span", { className: "setting-name" }, [
+      document.createTextNode(t("ui.settings.torrent.cacheLimitMegabytes")),
+      el("span", { className: "hint", text: `${t("ui.cache.note")} ${facts.join(" · ")}` }),
+    ]),
+    select,
+  ]);
+}
+
 function bufferBox(size) {
   const amount = el("strong", { text: bytes(size) });
   const clearButton = el("button", { className: "button danger", attrs: { type: "button" } });
@@ -2158,6 +2198,7 @@ async function poll() {
   } else if (STARTING !== null && (status.player.running || Date.now() - STARTING.since > 1500)) {
     hideLoading();
   }
+  if (status.notice) toast(status.notice);
   if (!status.job.active && status.job.error) {
     hideLoading();
     toast(status.job.error);

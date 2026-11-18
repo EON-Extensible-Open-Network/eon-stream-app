@@ -15,6 +15,48 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.24] — 2026-11-18 — the cache stays inside the space you give it
+
+### Fixed
+- **Every torrent took its whole size on disk the moment it started.** librqbit means to
+  make its files sparse on Windows and does not: its `FSCTL_SET_SPARSE` call passes a null
+  bytes-returned pointer, which Windows refuses for a synchronous handle, and the failure
+  was only logged. The file was then grown to full length and NTFS reserved all of it — a
+  sixty-gigabyte 4K episode cost sixty gigabytes before a minute had arrived, and three
+  episodes could fill a disk. The engine now marks each file sparse itself. Measured: a
+  263 MB film at 12% downloaded takes 32 MB, where it took 263 MB.
+- **A Windows 7 title bar inside the player while it loaded.** mpv's picture is a child of
+  the window, and a child window does not get the themed frame; with mpv's default border
+  the frame it drew while sizing itself, before the first frame, came out in the old classic
+  style. mpv now runs borderless when it is embedded.
+
+### Added
+- **A limit on the disk the cache may use** (Settings → disk space for the cache). Nothing
+  is deleted until the cache is 80% full. Past that it is brought down to 60% in one go:
+  first whole torrents that are not playing, least recently played first — so the episode
+  before is still there if you go back to it — then the part of what is playing that you
+  have already watched, never closer than three minutes behind the playhead.
+- **The watched part of what is playing is given back to the disk** while it plays: its
+  range of the file is deallocated in place. Which bytes are watched is not guessed from the
+  clock — a minute of a battle scene can be a hundred times a minute of credits. Every five
+  seconds the keeper records where mpv's reader really is in the file; mpv's read-ahead is
+  bounded at launch, so anything below a three-minute-old reading, less that bound, has
+  been played. Seeking back past it restarts the stream there, from the same source.
+- **Near the limit, the download is held to the film's own pace**, judged by what is ready
+  without a gap at the playhead rather than by the total, which after a seek counts bytes
+  from before it. At the limit only what the picture is about to need is fetched; 5% over
+  it, the download stops even if the picture has to wait, and the player says why. Measured
+  with a 150 MB limit on a 263 MB film: the disk peaked at 151 MB and playback did not stop.
+- **The limit is held under the disk's free space**, less 2 GB, whatever it is set to.
+  The setting offers only sizes the disk can hold and shows the free space, what the cache
+  uses, and the limit in force. A disk that filled up while the program was closed lowers
+  the limit by itself, and the viewer is told. Automatic (the default) is a quarter of the
+  free space, between 4 and 50 GB.
+
+### Changed
+- Each torrent is downloaded into `eon-torrents/<info hash>/`. Pieces left by an earlier
+  version in `eon-torrents/` are not reused; Settings → clear buffer removes them.
+
 ## [v0.23] — 2026-11-18 — new episodes, and when the next ones come
 
 ### Added

@@ -151,6 +151,17 @@ pub fn mpv_arguments() -> Vec<String> {
         "--input-default-bindings=no".to_owned(),
         "--input-vo-keyboard=no".to_owned(),
         "--background-color=#000000".to_owned(),
+        // No frame of mpv's own. Its picture is a child of this window, and
+        // Windows does not give a child window the themed frame a top-level
+        // one gets: with mpv's default `--border=yes` the frame it draws
+        // while it sizes itself -- before the first frame, which is exactly
+        // the loading screen -- came out in the old classic style, a
+        // Windows 7 title bar inside the player.
+        // (`--title-bar` would say it more precisely, but it only exists in
+        // recent mpv, and an mpv that meets an option it does not know
+        // refuses to start at all.)
+        "--border=no".to_owned(),
+        "--window-dragging=no".to_owned(),
     ]
 }
 

@@ -438,6 +438,8 @@ pub async fn trailer(state: State<'_, Shared>) -> Out<String> {
             video_hash: None,
             size: None,
             torrent: None,
+            file_index: None,
+            source: None,
         };
         launch(
             &shared,
@@ -446,7 +448,7 @@ pub async fn trailer(state: State<'_, Shared>) -> Out<String> {
             Vec::new(),
             None,
             search,
-            false,
+            Start::Beginning,
         )?;
         Ok("player".to_owned())
     })
@@ -618,22 +620,38 @@ pub async fn play(
     from_start: Option<bool>,
 ) -> Out<()> {
     let shared = Arc::clone(state.inner());
-    let resume = !from_start.unwrap_or(false);
-    tauri::async_runtime::spawn_blocking(move || start(&shared, index, file, resume, None))
+    let begin = if from_start.unwrap_or(false) {
+        Start::Beginning
+    } else {
+        Start::Resume
+    };
+    tauri::async_runtime::spawn_blocking(move || start(&shared, index, file, begin, None))
         .await
         .map_err(|e| e.to_string())?
 }
 
+/// Where a playback starts.
+#[derive(Clone, Copy)]
+pub enum Start {
+    /// Where the viewer left off, if anywhere.
+    Resume,
+    /// The beginning: "Start over".
+    Beginning,
+    /// A given second: a restart after a seek back past what the cache
+    /// keeper gave back.
+    At(f64),
+}
+
 /// Start source `index` of the current list, on the calling thread.
 ///
-/// `resume` says whether to pick up where the viewer left off; "Start over"
-/// is the one way to say no. `ticket` is a start already under way -- see
+/// `begin` says where: where the viewer left off, the beginning ("Start
+/// over"), or a given second. `ticket` is a start already under way -- see
 /// [`play_next`] -- or `None` to begin one.
 fn start(
     shared: &Shared,
     index: usize,
     file: Option<usize>,
-    resume: bool,
+    begin: Start,
     ticket: Option<u64>,
 ) -> Out<()> {
     // Everything that needs the lock happens first and the lock is then
@@ -685,6 +703,8 @@ fn start(
         video_hash: hints.video_hash.map(ToOwned::to_owned),
         size: hints.video_size.or_else(|| ranked.stream.size_bytes()),
         torrent: None,
+        file_index: None,
+        source: Some((index, file)),
     };
 
     let (source, headers) = match (torrents::source_of(&ranked.stream), engine) {
@@ -699,6 +719,7 @@ fn start(
                         search.size = Some(file.length);
                     }
                     search.torrent = Some((engine, resolved.handle));
+                    search.file_index = Some(resolved.index);
                     (resolved.source, Vec::new())
                 }
                 Err(message) => return finish_with_error(shared, ticket, message),
@@ -726,7 +747,7 @@ fn start(
         },
     };
 
-    launch(shared, source, headers, subtitles, playing, search, resume)
+    launch(shared, source, headers, subtitles, playing, search, begin)
 }
 
 /// Play the episode after the one playing, from the same release when the
@@ -795,7 +816,7 @@ pub async fn play_next(state: State<'_, Shared>) -> Out<()> {
                 .or_else(|| addon.and_then(|addon| ranked.iter().position(|r| r.addon_id == addon)))
                 .unwrap_or(0)
         };
-        start(&shared, index, None, true, Some(ticket))
+        start(&shared, index, None, Start::Resume, Some(ticket))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -883,8 +904,10 @@ pub async fn cancel(state: State<'_, Shared>) -> Out<()> {
                 }
             }
             // Ends the subtitle search for this playback too: its ticket no
-            // longer matches.
+            // longer matches. And the cache keeper's watch.
             session.subtitles = subs::Found::default();
+            session.keeper.torrent = None;
+            session.keeper.source = None;
             (session.torrent.clone(), hashes)
         };
         crate::surface::close_controls();
@@ -978,6 +1001,8 @@ pub fn play_link_now(shared: &Shared, link: &str) -> Out<()> {
         video_hash: None,
         size: None,
         torrent: None,
+        file_index: None,
+        source: None,
     };
 
     if let Some(request) = torrents::request_from_argument(&link) {
@@ -995,6 +1020,7 @@ pub fn play_link_now(shared: &Shared, link: &str) -> Out<()> {
         return match torrents::resolve(&engine, &source, None, &job, ticket) {
             Ok(resolved) => {
                 search.torrent = Some((engine, resolved.handle));
+                search.file_index = Some(resolved.index);
                 launch(
                     shared,
                     resolved.source,
@@ -1002,7 +1028,7 @@ pub fn play_link_now(shared: &Shared, link: &str) -> Out<()> {
                     Vec::new(),
                     None,
                     search,
-                    true,
+                    Start::Resume,
                 )
             }
             Err(message) => finish_with_error(shared, ticket, message),
@@ -1015,7 +1041,15 @@ pub fn play_link_now(shared: &Shared, link: &str) -> Out<()> {
     } else {
         PlaybackSource::Url(link)
     };
-    launch(shared, source, Vec::new(), Vec::new(), None, search, true)
+    launch(
+        shared,
+        source,
+        Vec::new(),
+        Vec::new(),
+        None,
+        search,
+        Start::Resume,
+    )
 }
 
 /// Pause, seek, stop, and the rest of what a player does.
@@ -1029,6 +1063,46 @@ pub async fn player(state: State<'_, Shared>, action: String, value: Option<f64>
         // The window's business, not mpv's: the picture is a child of the
         // window and follows its size.
         return crate::surface::toggle_fullscreen().map(|_| ());
+    }
+    if action == "seek" || action == "seek-to" {
+        let amount = value.unwrap_or_default();
+        let absolute = action == "seek-to";
+        let shared = Arc::clone(state.inner());
+        let restart = with_session(&state, move |session| {
+            let released = session.keeper.released_secs;
+            if released <= 0.0 || session.keeper.source.is_none() {
+                return Ok(None);
+            }
+            let target = if absolute {
+                amount
+            } else {
+                let now = session
+                    .player
+                    .as_mut()
+                    .and_then(|player| player.position().ok().flatten())
+                    .unwrap_or_default();
+                now + amount
+            };
+            Ok((target < released).then_some(target.max(0.0)))
+        })
+        .await?;
+        if let Some(target) = restart {
+            return tauri::async_runtime::spawn_blocking(move || restart_at(&shared, target))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        return with_session(&state, move |session| {
+            let Some(player) = session.player.as_mut() else {
+                return Err(session.text("ui.error.noplayer"));
+            };
+            let mode = if absolute {
+                SeekMode::Absolute
+            } else {
+                SeekMode::Relative
+            };
+            player.seek(amount, mode).map_err(|e| e.to_string())
+        })
+        .await;
     }
     let stopping = action == "stop";
     let result = with_session(&state, move |session| {
@@ -1130,6 +1204,43 @@ pub async fn tuning(state: State<'_, Shared>) -> Out<TuningView> {
     .await
 }
 
+/// Play the same source again from `target`: the part of the file before it
+/// was given back to keep the cache under its limit, so the torrent is
+/// dropped with its pieces -- its record of what it has no longer matches
+/// the disk -- and fetched again from there.
+fn restart_at(shared: &Shared, target: f64) -> Out<()> {
+    let lost = || "the host lost track of its own state".to_owned();
+    let (index, file, engine, hash, ticket) = {
+        let mut session = shared.lock().map_err(|_| lost())?;
+        let (index, file) = session
+            .keeper
+            .source
+            .ok_or_else(|| session.text("ui.error.noplayer"))?;
+        // The start begins before the player goes, so no status poll sees
+        // "nothing playing, nothing starting" in between and takes the
+        // controls down.
+        let ticket = session
+            .job
+            .lock()
+            .map(|mut job| job.begin())
+            .unwrap_or_default();
+        session.remember_position();
+        if let Some(player) = session.player.take() {
+            let _ = player.quit();
+        }
+        session.playing = None;
+        session.last_seen = None;
+        let hash = session.playing_torrent.take();
+        (index, file, session.torrent.clone(), hash, ticket)
+    };
+    if let (Some(engine), Some(hash)) = (engine, hash) {
+        if let Ok(handle) = engine.get(&hash) {
+            let _ = engine.remove(&handle, true);
+        }
+    }
+    start(shared, index, file, Start::At(target), Some(ticket))
+}
+
 /// The audio and subtitle tracks of what is playing, for the player's menu.
 #[tauri::command]
 pub async fn tracks(state: State<'_, Shared>) -> Out<Vec<TrackView>> {
@@ -1207,6 +1318,9 @@ pub async fn settings_set(
             }
             "torrent.uploadLimitKbps" => {
                 optional(value, |v| candidate.torrent.upload_limit_kbps = v)
+            }
+            "torrent.cacheLimitMegabytes" => {
+                parse(value, |v| candidate.torrent.cache_limit_megabytes = v)
             }
             "torrent.prebufferMegabytes" => {
                 parse(value, |v| candidate.torrent.prebuffer_megabytes = v)
@@ -1318,7 +1432,7 @@ fn launch(
     subtitles: Vec<String>,
     playing: Option<NowPlaying>,
     search: subs::Search,
-    resume: bool,
+    begin: Start,
 ) -> Out<()> {
     let ticket = search.ticket;
     // Before the lock: on a `--play` start this can wait for the window to be
@@ -1359,6 +1473,7 @@ fn launch(
     // decide what comes next -- the next episode, or back to the catalogue --
     // and they cannot ask a player that has already gone.
     extra_args.push("--keep-open=yes".to_owned());
+    extra_args.extend(crate::keeper::player_cache_args());
     // Subtitles that read over a bright sky as well as a dark room: mpv's
     // default outline is thin enough to vanish against white.
     extra_args.push("--sub-border-size=2.6".to_owned());
@@ -1379,10 +1494,13 @@ fn launch(
     }
     extra_args.extend(session.settings.playback.player_arguments.iter().cloned());
 
-    let resume = playing
-        .as_ref()
-        .filter(|_| resume)
-        .and_then(|p| session.history.resume_position(&p.content_type, &p.id));
+    let resume = match begin {
+        Start::Resume => playing
+            .as_ref()
+            .and_then(|p| session.history.resume_position(&p.content_type, &p.id)),
+        Start::Beginning => None,
+        Start::At(seconds) => Some(seconds),
+    };
     // The name, not the URL: `v0.13` shipped because a window title read
     // `Big%20Buck%20Bunny.mp4`.
     let title = playing
@@ -1406,6 +1524,13 @@ fn launch(
                 .torrent
                 .as_ref()
                 .map(|(_, handle)| handle.info_hash().to_owned());
+            let watched = search
+                .torrent
+                .clone()
+                .zip(search.file_index)
+                .map(|((engine, handle), index)| (engine, handle, index));
+            let keep = watched.is_some();
+            session.keeper.begin(ticket, watched, search.source);
             subs::reset(&mut session, ticket);
             if let Ok(mut job) = session.job.lock() {
                 job.done();
@@ -1415,6 +1540,10 @@ fn launch(
             // waits for the window's own thread.
             drop(session);
             crate::surface::open_controls();
+            if keep {
+                let shared = Arc::clone(shared);
+                std::thread::spawn(move || crate::keeper::watch(&shared, ticket));
+            }
             let shared = Arc::clone(shared);
             std::thread::spawn(move || subs::find(&shared, search));
             Ok(())

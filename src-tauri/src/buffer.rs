@@ -34,9 +34,36 @@ fn owned_folder(session: &Session) -> Option<PathBuf> {
         .map(|options| options.download_dir)
 }
 
+/// Free space on the disk the cache is on.
+#[must_use]
+pub fn free(session: &Session) -> Option<u64> {
+    let folder = crate::torrents::options_from(&session.settings.torrent)
+        .ok()
+        .map(|options| options.download_dir)?;
+    // The folder may not exist yet; its disk does.
+    let probe = if folder.exists() {
+        folder
+    } else {
+        crate::state::beside_exe("")
+    };
+    eon_stream_engine::free_space(&probe)
+}
+
 /// Bytes of pieces on disk.
+///
+/// What the session's torrents actually occupy -- downloaded, less what was
+/// given back -- when a session is running: a torrent's files are sparse,
+/// and their length says nothing about their size on disk. Without one, the
+/// folder's total, which is what a crashed earlier run left.
 #[must_use]
 pub fn size(session: &Session) -> u64 {
+    if let Some(engine) = session.torrent.as_deref() {
+        return engine
+            .list()
+            .iter()
+            .filter_map(|handle| engine.bytes_on_disk(handle).ok())
+            .sum();
+    }
     if let Some(folder) = owned_folder(session) {
         return folder_size(&folder);
     }

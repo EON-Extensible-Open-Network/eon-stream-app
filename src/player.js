@@ -183,6 +183,15 @@ async function poll() {
   }
   const player = status.player;
   STATE = player;
+  if (status.notice) {
+    const note = $("note");
+    note.textContent = status.notice;
+    note.hidden = false;
+    clearTimeout(note.timer);
+    note.timer = setTimeout(() => {
+      note.hidden = true;
+    }, 9000);
+  }
   if (!player.running) return; // The host is taking this page down.
 
   put($("title"), player.title || "");

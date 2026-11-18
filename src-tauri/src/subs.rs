@@ -209,6 +209,12 @@ pub struct Search {
     pub video_hash: Option<String>,
     pub size: Option<u64>,
     pub torrent: Option<(Arc<TorrentEngine>, TorrentHandle)>,
+    /// Which file of the torrent is playing.
+    pub file_index: Option<usize>,
+    /// Which source of the current list, and which file was asked for: what
+    /// the cache keeper restarts when a seek goes back past what it gave
+    /// back.
+    pub source: Option<(usize, Option<usize>)>,
 }
 
 /// The languages a viewer wants subtitles in, best first, and whether one
