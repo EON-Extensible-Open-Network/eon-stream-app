@@ -57,10 +57,16 @@ pub fn free(session: &Session) -> Option<u64> {
 /// folder's total, which is what a crashed earlier run left.
 #[must_use]
 pub fn size(session: &Session) -> u64 {
+    let kept = session.downloads.hashes();
     if let Some(engine) = session.torrent.as_deref() {
         return engine
             .list()
             .iter()
+            .filter(|handle| {
+                !kept
+                    .iter()
+                    .any(|hex| hex.eq_ignore_ascii_case(handle.info_hash()))
+            })
             .filter_map(|handle| engine.bytes_on_disk(handle).ok())
             .sum();
     }
@@ -111,10 +117,16 @@ pub fn clear(session: &mut Session) -> Result<u64, String> {
                 // Through the session first, which is right for both kinds of
                 // folder: it deletes exactly the files of the torrents it
                 // holds, and stops serving them.
+                let kept = session.downloads.hashes();
                 for handle in engine.list() {
-                    let _ = engine.remove(&handle, true);
+                    if !kept
+                        .iter()
+                        .any(|hex| hex.eq_ignore_ascii_case(handle.info_hash()))
+                    {
+                        let _ = engine.remove(&handle, true);
+                    }
                 }
-                let _ = engine.shutdown();
+                let _ = engine.shutdown_keeping(&kept);
             }
             Err(shared) => {
                 // A worker still holds it, so a torrent is being resolved
@@ -126,8 +138,22 @@ pub fn clear(session: &mut Session) -> Result<u64, String> {
     }
 
     if let Some(folder) = owned_folder(session) {
-        if folder.exists() {
-            std::fs::remove_dir_all(&folder).map_err(|e| e.to_string())?;
+        // The folder is ours, but a download inside it is the viewer's:
+        // everything goes except the folders named by a download's hash.
+        let kept = session.downloads.hashes();
+        if let Ok(entries) = std::fs::read_dir(&folder) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+                if kept.iter().any(|hex| hex.eq_ignore_ascii_case(&name)) {
+                    continue;
+                }
+                let path = entry.path();
+                let _ = if path.is_dir() {
+                    std::fs::remove_dir_all(&path)
+                } else {
+                    std::fs::remove_file(&path)
+                };
+            }
         }
     }
     Ok(before.saturating_sub(size(session)))

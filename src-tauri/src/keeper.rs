@@ -254,10 +254,20 @@ fn tick(shared: &Shared, ticket: u64) -> bool {
 
     // The engine is asked with nothing locked: removing a torrent waits on
     // its runtime.
+    // Downloads are the viewer's, not cache: never counted, never evicted.
+    let kept = shared
+        .lock()
+        .map(|session| session.downloads.hashes())
+        .unwrap_or_default();
+    let is_kept = |handle: &TorrentHandle| {
+        kept.iter()
+            .any(|hex| hex.eq_ignore_ascii_case(handle.info_hash()))
+    };
     let usage = |engine: &TorrentEngine| -> u64 {
         engine
             .list()
             .iter()
+            .filter(|other| !is_kept(other))
             .filter_map(|other| engine.bytes_on_disk(other).ok())
             .sum()
     };
@@ -298,7 +308,7 @@ fn tick(shared: &Shared, ticket: u64) -> bool {
         let mut others: Vec<TorrentHandle> = engine
             .list()
             .into_iter()
-            .filter(|other| other.info_hash() != handle.info_hash())
+            .filter(|other| other.info_hash() != handle.info_hash() && !is_kept(other))
             .collect();
         others.sort_by_key(|other| played.get(other.info_hash()).copied().unwrap_or_default());
         for other in others {

@@ -233,6 +233,8 @@ pub struct Session {
     pub ratings: crate::ratings::Ratings,
     /// The community client's server and session, if the viewer set one.
     pub community: crate::community::Community,
+    /// Titles downloaded to watch later: never cache.
+    pub downloads: crate::downloads::Downloads,
 }
 
 impl Session {
@@ -285,6 +287,7 @@ impl Session {
             tried: Vec::new(),
             ratings: crate::ratings::Ratings::load(),
             community: crate::community::Community::load(),
+            downloads: crate::downloads::Downloads::load(),
         }
     }
 

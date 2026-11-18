@@ -242,6 +242,7 @@ function go(target) {
   else if (target === "discover") openDiscover();
   else if (target === "calendar") openCalendar();
   else if (target === "profile") openProfile();
+  else if (target === "downloads") openDownloads();
   else if (target === "community") openCommunity();
   else if (target === "library") openLibrary();
   else if (target === "addons") loadAddons();
@@ -1770,6 +1771,76 @@ async function shareRating(rating, detail) {
   }
 }
 
+// ----------------------------------------------------------------- downloads
+
+let DOWNLOADS_TIMER = 0;
+
+async function openDownloads() {
+  showView("downloads");
+  clearTimeout(DOWNLOADS_TIMER);
+  const list = document.getElementById("download-list");
+  let items;
+  try {
+    items = await invoke("downloads");
+  } catch (error) {
+    toast(error);
+    return;
+  }
+  if (document.getElementById("view-downloads").hidden) return;
+  clear(list);
+  if (!items.length) {
+    list.appendChild(el("div", { className: "spinner", text: t("ui.download.empty") }));
+    return;
+  }
+  for (const item of items) {
+    const thumb = el("div", { className: "cal-thumb" });
+    if (item.poster) thumb.appendChild(image(item.poster, ""));
+    const meter = el("div", { className: "meter" }, [el("i")]);
+    meter.firstChild.style.width = `${item.percent}%`;
+    const state = item.done
+      ? t("ui.download.ready", item.length ? bytes(item.length) : "")
+      : t("ui.download.progress", item.percent, bytes(item.down_bps));
+    const playButton = el("button", {
+      className: "button play",
+      attrs: { type: "button" },
+      onClick: async () => {
+        showLoading(item.name, item.poster, t("ui.job.starting"));
+        try {
+          await ask("download_play", { hex: item.hex });
+        } catch (error) {
+          hideLoading();
+        }
+      },
+    });
+    playButton.appendChild(icon("play"));
+    playButton.appendChild(el("span", { text: t("ui.action.play") }));
+    playButton.disabled = !item.done;
+    const remove = el("button", {
+      className: "text-button quiet",
+      attrs: { type: "button" },
+      text: t("ui.download.remove"),
+      onClick: async () => {
+        await ask("download_remove", { hex: item.hex });
+        openDownloads();
+      },
+    });
+    list.appendChild(
+      el("div", { className: "cal-entry download" }, [
+        thumb,
+        el("span", { className: "grow" }, [
+          el("div", { className: "title", text: item.name }),
+          el("div", { className: "when", text: state }),
+          item.done ? null : meter,
+        ]),
+        playButton,
+        remove,
+      ])
+    );
+  }
+  // While anything is still coming in, the page keeps itself current.
+  if (items.some((item) => !item.done)) DOWNLOADS_TIMER = setTimeout(openDownloads, 2000);
+}
+
 // ------------------------------------------------------------------- profile
 
 const PROFILE = { order: "recent" };
@@ -2286,7 +2357,7 @@ function sourceRow(source) {
   if (source.is_torrent) tag(t("ui.sources.torrent"));
   if (source.needs_headers) tag(t("ui.sources.headers"));
 
-  return el(
+  const row = el(
     "button",
     {
       className: "source",
@@ -2302,6 +2373,19 @@ function sourceRow(source) {
       tags,
     ]
   );
+  if (!source.is_torrent) return row;
+  // Download to watch later: a torrent only, since it is fetched whole.
+  const keep = iconButton("download", t("ui.download.this"), async () => {
+    keep.disabled = true;
+    toast(t("ui.download.started"));
+    try {
+      await invoke("download", { index: source.index });
+    } catch (error) {
+      toast(error);
+    }
+    keep.disabled = false;
+  }, "icon-button source-download");
+  return el("div", { className: "source-line" }, [row, keep]);
 }
 
 // --------------------------------------------------------------- playing it

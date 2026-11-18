@@ -46,6 +46,7 @@
 mod buffer;
 mod commands;
 mod community;
+mod downloads;
 mod http;
 mod keeper;
 mod ratings;
@@ -120,6 +121,12 @@ fn window(play: Option<String>) {
         });
     }
 
+    // Downloads that were not finished when the program last closed carry on.
+    {
+        let shared = Arc::clone(&session);
+        std::thread::spawn(move || commands::resume_downloads(&shared));
+    }
+
     let app = tauri::Builder::default()
         .manage(Arc::clone(&session))
         .setup(|app| {
@@ -150,6 +157,10 @@ fn window(play: Option<String>) {
             commands::rating_get,
             commands::rating_set,
             commands::profile,
+            commands::download,
+            commands::downloads,
+            commands::download_play,
+            commands::download_remove,
             commands::community_state,
             commands::community_server,
             commands::community_request,
@@ -216,7 +227,8 @@ fn shutdown(session: &Shared) {
         // here would race it, so in that case the pieces are left where they
         // are rather than half-removed.
         if let Ok(engine) = Arc::try_unwrap(engine) {
-            let _ = engine.shutdown();
+            // Downloads stay on disk whatever happens to the cache.
+            let _ = engine.shutdown_keeping(&session.downloads.hashes());
         }
     }
 }

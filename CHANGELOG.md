@@ -15,6 +15,20 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.29] — 2026-11-18 — downloads, to watch without a connection
+
+### Added
+- **Download to watch later.** Every torrent source has a download button. Only the file
+  asked for is fetched — an episode does not bring its season pack (small files that share
+  its first and last pieces, a subtitle or a poster, can come with it). The Downloads page
+  follows each one and, once it is whole, plays it from the file: nothing on the network,
+  no torrent running.
+- **A download is the viewer's, not cache.** The cache limit does not count it and never
+  gives back any of it; clearing the buffer leaves it; closing the program leaves it on
+  disk (the engine's new `shutdown_keeping`). Delete it from the Downloads page.
+- Downloads not finished when the program closed carry on when it opens again. The list is
+  `eon-downloads.json` beside the executable.
+
 ## [v0.28] — 2026-11-18 — three scores on every title, and a remote's arrow keys
 
 ### Added

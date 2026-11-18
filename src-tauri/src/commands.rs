@@ -621,6 +621,283 @@ pub async fn community_request(
     .await
 }
 
+/// Download a source of the current list, to watch later without a
+/// connection. Returns once the torrent is known and fetching; the downloads
+/// page follows it from there.
+#[tauri::command]
+pub async fn download(state: State<'_, Shared>, index: usize) -> Out<()> {
+    let shared = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || -> Out<()> {
+        let lost = || "the host lost track of its own state".to_owned();
+        let (engine, request, hex, wanted) = {
+            let mut session = shared.lock().map_err(|_| lost())?;
+            let ranked = session
+                .sources
+                .get(index)
+                .cloned()
+                .ok_or_else(|| session.text("ui.error.nosource"))?;
+            let torrent = torrents::source_of(&ranked.stream)
+                .ok_or_else(|| session.text("ui.download.torrentonly"))?;
+            let kept = crate::downloads::Request::from(&torrent.request)
+                .ok_or_else(|| session.text("ui.download.torrentonly"))?;
+            let playing = now_playing(&session, &ranked);
+            let poster = session.meta.as_ref().and_then(|meta| meta.poster.clone());
+            let engine = session.torrent_engine()?;
+            let hex = kept.hex.clone();
+            let (content_type, id, name, series_id) = playing.map_or_else(
+                || {
+                    (
+                        String::new(),
+                        String::new(),
+                        ranked.stream.display_label(),
+                        None,
+                    )
+                },
+                |p| (p.content_type, p.id, p.name, p.series_id),
+            );
+            session.downloads.add(crate::downloads::Download {
+                request: kept,
+                file: None,
+                wanted_file: torrent.file_index,
+                content_type,
+                id,
+                name,
+                series_id,
+                poster,
+                path: None,
+                length: None,
+                added: eon_stream_core::history::now_unix(),
+            });
+            session.downloads.save();
+            (engine, torrent.request, hex, torrent.file_index)
+        };
+        fetch_download(&shared, &engine, &request, &hex, wanted)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Add a download's torrent to the engine and fetch only its file.
+fn fetch_download(
+    shared: &Shared,
+    engine: &eon_stream_engine::TorrentEngine,
+    request: &eon_stream_engine::TorrentRequest,
+    hex: &str,
+    wanted: Option<usize>,
+) -> Out<()> {
+    let handle = engine.add(request).map_err(|e| e.to_string())?;
+    let file = handle
+        .choose_file(None, wanted)
+        .map_err(|e| e.to_string())?
+        .clone();
+    engine
+        .only_file(&handle, file.index)
+        .map_err(|e| e.to_string())?;
+    if let Ok(mut session) = shared.lock() {
+        if let Some(download) = session
+            .downloads
+            .all_mut()
+            .iter_mut()
+            .find(|d| d.request.hex.eq_ignore_ascii_case(hex))
+        {
+            download.file = Some(file.index);
+            download.length = Some(file.length);
+        }
+        session.downloads.save();
+    }
+    Ok(())
+}
+
+/// Carry on with downloads that were not finished, at startup.
+pub fn resume_downloads(shared: &Shared) {
+    let pending: Vec<crate::downloads::Download> = shared
+        .lock()
+        .map(|session| {
+            session
+                .downloads
+                .all()
+                .iter()
+                .filter(|d| d.path.is_none())
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    if pending.is_empty() {
+        return;
+    }
+    let Ok(engine) = shared
+        .lock()
+        .map_err(|_| String::new())
+        .and_then(|mut session| session.torrent_engine())
+    else {
+        return;
+    };
+    for download in pending {
+        let wanted = download.file.or(download.wanted_file);
+        let _ = fetch_download(
+            shared,
+            &engine,
+            &download.request.to_request(),
+            &download.request.hex,
+            wanted,
+        );
+    }
+}
+
+/// Every download, with how far each has got. A download that has finished
+/// is noticed here and remembered with its file.
+#[tauri::command]
+pub async fn downloads(state: State<'_, Shared>) -> Out<Vec<crate::downloads::DownloadView>> {
+    with_session(&state, |session| {
+        let engine = session.torrent.clone();
+        let mut changed = false;
+        let mut out = Vec::new();
+        for download in session.downloads.all_mut().iter_mut() {
+            let mut percent = 0u8;
+            let mut down_bps = 0;
+            if download.path.is_some() {
+                percent = 100;
+            } else if let (Some(engine), Some(index)) = (engine.as_ref(), download.file) {
+                if let Ok(handle) = engine.get(&download.request.hex) {
+                    let have = engine.file_progress(&handle, index).unwrap_or_default();
+                    let length = download.length.unwrap_or(1).max(1);
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        percent = ((have.min(length) * 100) / length) as u8;
+                    }
+                    down_bps = engine
+                        .progress(&handle)
+                        .map(|p| p.download_bps)
+                        .unwrap_or_default();
+                    if have >= length {
+                        if let Ok(file) = handle.file(index) {
+                            download.path = Some(
+                                engine
+                                    .options()
+                                    .download_dir
+                                    .join(download.request.hex.to_ascii_lowercase())
+                                    .join(&file.path),
+                            );
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            out.push(crate::downloads::DownloadView {
+                hex: download.request.hex.clone(),
+                name: download.name.clone(),
+                poster: download.poster.clone(),
+                content_type: download.content_type.clone(),
+                id: download.id.clone(),
+                percent,
+                done: download.path.is_some(),
+                down_bps,
+                length: download.length,
+            });
+        }
+        if changed {
+            session.downloads.save();
+        }
+        Ok(out)
+    })
+    .await
+}
+
+/// Play a finished download from its file: nothing on the network.
+#[tauri::command]
+pub async fn download_play(state: State<'_, Shared>, hex: String) -> Out<()> {
+    let shared = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || -> Out<()> {
+        let (download, ticket) = {
+            let session = shared
+                .lock()
+                .map_err(|_| "the host lost track of its own state".to_owned())?;
+            let download = session
+                .downloads
+                .get(&hex)
+                .cloned()
+                .ok_or_else(|| session.text("ui.download.gone"))?;
+            let ticket = session
+                .job
+                .lock()
+                .map(|mut job| job.begin())
+                .unwrap_or_default();
+            (download, ticket)
+        };
+        let Some(path) = download.path.clone().filter(|path| path.is_file()) else {
+            return finish_with_error(&shared, ticket, "ui.download.notyet".to_owned());
+        };
+        let playing = (!download.id.is_empty()).then(|| NowPlaying {
+            content_type: download.content_type.clone(),
+            id: download.id.clone(),
+            name: download.name.clone(),
+            series_id: download.series_id.clone(),
+            season: None,
+            episode: None,
+            binge_group: None,
+            addon_id: None,
+        });
+        let search = subs::Search {
+            ticket,
+            subject: playing
+                .as_ref()
+                .map(|p| (p.content_type.clone(), p.id.clone())),
+            filename: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned()),
+            video_hash: None,
+            size: download.length,
+            torrent: None,
+            file_index: None,
+            source: None,
+        };
+        launch(
+            &shared,
+            PlaybackSource::File(path),
+            Vec::new(),
+            Vec::new(),
+            playing,
+            search,
+            Start::Resume,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Delete a download, finished or not, and its file.
+#[tauri::command]
+pub async fn download_remove(state: State<'_, Shared>, hex: String) -> Out<()> {
+    let shared = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || -> Out<()> {
+        let (engine, folder) = {
+            let mut session = shared
+                .lock()
+                .map_err(|_| "the host lost track of its own state".to_owned())?;
+            let removed = session.downloads.remove(&hex);
+            session.downloads.save();
+            let engine = session.torrent.clone();
+            let folder = torrents::options_from(&session.settings.torrent)
+                .ok()
+                .map(|options| options.download_dir.join(hex.to_ascii_lowercase()));
+            (engine, removed.and(folder))
+        };
+        if let Some(engine) = engine {
+            if let Ok(handle) = engine.get(&hex) {
+                let _ = engine.remove(&handle, true);
+            }
+        }
+        // The torrent's own folder, named by its info hash: this program
+        // made it, for this download.
+        if let Some(folder) = folder.filter(|folder| folder.is_dir()) {
+            let _ = std::fs::remove_dir_all(folder);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// The viewer's own score of a title, if they gave one.
 #[tauri::command]
 pub async fn rating_get(

@@ -1739,6 +1739,28 @@ button.pill:focus-visible {
   outline-offset: 3px;
 }
 
+/* ---------------------------------------------------------------- downloads */
+
+.source-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.source-line .source {
+  flex: 1;
+  min-width: 0;
+}
+
+.source-download {
+  flex: none;
+}
+
+.cal-entry.download .meter {
+  margin-top: 8px;
+  max-width: 320px;
+}
+
 /* ---------------------------------------------------------------- community */
 
 .community {

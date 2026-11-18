@@ -72,6 +72,7 @@ const ICONS = {
     ["circle", { cx: 12, cy: 12, r: 2.8 }],
   ],
   plus: [["path", { d: "M12 5v14M5 12h14" }]],
+  download: [["path", { d: "M12 4v11M7 10.5l5 5 5-5M5 19.5h14" }]],
   star: [["path", { d: "M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z" }]],
   next: [
     ["path", { d: "M6 5.5l9 6.5-9 6.5z", fill: "currentColor" }],
