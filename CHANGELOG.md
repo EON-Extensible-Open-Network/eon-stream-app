@@ -15,6 +15,24 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.28] — 2026-11-18 — three scores on every title, and a remote's arrow keys
+
+### Added
+- **The IMDb score on a title's page**, beside its year and runtime, when the addon sends
+  one (Cinemeta does). With the viewer's own score under it and, when a community server
+  is set, the community's average below, a title's page now shows three scores: the wide
+  public's, yours, and your community's.
+- **The community's best**: a ranked list of films or series by the scores people gave
+  them, from five scores up, by a Bayesian average — the mean pulled towards the site-wide
+  mean by a weight of five scores — so that two enthusiastic scores do not outrank two
+  thousand slightly lower ones. Added to the community API draft as `GET /v0/top/{type}`.
+- **Arrow keys, the way a television remote works.** From whatever has focus, an arrow
+  goes to the nearest control in that direction by where things are on screen — down from
+  a poster to the poster below it, not the next one in the page. Left and right stay on
+  their row and stop at its end. Enter presses; Backspace goes back from a title's page. A
+  mouse sees no change, and text boxes, sliders and the score stars keep their own arrows.
+  What the arrows land on carries a clear focus ring.
+
 ## [v0.27] — 2026-11-18 — a community client, waiting for a community
 
 ### Added

@@ -28,7 +28,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["unstable"] }
 # Decisions, protocol, signatures, settings, i18n. No GUI dependency reaches
 # the other side of this line (madde 32c).
-eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "80f3a950ff262e5b4dadcd0fa7bbe282d1e91e54" }
+eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "35706373c553c6268aadf6f30172d5f1bcc67712" }
 # Torrents, the loopback server, and mpv over JSON IPC.
 eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "552fe34585fa4d7442f841fac39c2ba148dc848a" }
 # The IPC surface is typed on both sides; these serialise it. Already in the

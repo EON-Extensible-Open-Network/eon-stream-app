@@ -173,6 +173,8 @@ pub struct DetailView {
     pub logo: Option<String>,
     pub year: Option<String>,
     pub runtime: Option<String>,
+    /// The IMDb score, as the addon gave it.
+    pub imdb_rating: Option<String>,
     pub genres: Vec<String>,
     pub cast: Vec<String>,
     pub director: Vec<String>,
@@ -1182,6 +1184,7 @@ fn detail_of(
         logo: meta.logo.clone(),
         year: meta.release_info.clone(),
         runtime: meta.runtime.clone(),
+        imdb_rating: meta.imdb_rating.clone(),
         genres: meta.genres.clone(),
         cast: meta.cast.clone(),
         director: meta.director.clone(),

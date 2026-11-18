@@ -1725,6 +1725,20 @@ button.pill:focus-visible {
   display: none;
 }
 
+/* --------------------------------------------------------------- arrow keys */
+
+/* Whatever the arrow keys land on is plain to see from a sofa. */
+.link:focus-visible,
+.chip:focus-visible,
+.source:focus-visible,
+.episode:focus-visible,
+.button:focus-visible,
+.icon-button:focus-visible,
+.round:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
 /* ---------------------------------------------------------------- community */
 
 .community {
@@ -1794,6 +1808,23 @@ button.pill:focus-visible {
   color: #f5c518;
   font-size: 14px;
   margin-top: 2px;
+}
+
+.facts .imdb {
+  padding: 1px 8px;
+  border-radius: 4px;
+  color: #0a0c12;
+  background: #f5c518;
+  font-weight: 800;
+}
+
+.score-line .rank {
+  width: 32px;
+  flex: none;
+  text-align: center;
+  font-family: var(--display);
+  font-size: 22px;
+  color: var(--muted);
 }
 
 .community-box {

@@ -1107,6 +1107,7 @@ async function openDetail(contentType, id) {
   drawArt(art, detail.background, detail.poster);
 
   const facts = el("div", { className: "facts" });
+  if (detail.imdb_rating) facts.appendChild(el("span", { className: "imdb", text: `IMDb ${detail.imdb_rating}` }));
   for (const fact of [detail.year, detail.runtime]) {
     if (fact) facts.appendChild(el("span", { text: fact }));
   }
@@ -1413,6 +1414,7 @@ async function openCommunity(tab = "feed") {
   const tabs = el("div", { className: "chips", attrs: { role: "tablist" } });
   for (const [name, key] of [
     ["feed", "ui.community.feed"],
+    ["top", "ui.community.top"],
     ["friends", "ui.community.friends"],
     ["account", "ui.community.account"],
   ]) {
@@ -1431,6 +1433,7 @@ async function openCommunity(tab = "feed") {
   page.appendChild(body);
   try {
     if (tab === "feed") await drawFeed(body);
+    else if (tab === "top") await drawTop(body);
     else if (tab === "friends") await drawFriends(body);
     else await drawAccount(body);
   } catch (error) {
@@ -1497,6 +1500,41 @@ async function drawFeed(body) {
     return;
   }
   for (const entry of feed) body.appendChild(scoreLine(entry.username, entry.rating));
+}
+
+/** The community's best: titles ranked by the scores people gave them,
+ *  each from five scores up. */
+async function drawTop(body, type = "movie") {
+  clear(body);
+  const pick = el("div", { className: "chips" });
+  for (const kind of ["movie", "series"]) {
+    pick.appendChild(
+      el("button", {
+        className: "chip",
+        text: typeName(kind),
+        attrs: { type: "button", "aria-pressed": String(kind === type) },
+        onClick: () => drawTop(body, kind),
+      })
+    );
+  }
+  body.appendChild(pick);
+  let top;
+  try {
+    top = await cq("GET", `/v0/top/${type}`);
+  } catch (error) {
+    body.appendChild(el("div", { className: "spinner", text: String(error) }));
+    return;
+  }
+  if (!top.length) {
+    body.appendChild(el("div", { className: "spinner", text: t("ui.community.topempty") }));
+    return;
+  }
+  top.forEach((entry, at) => {
+    const line = scoreLine(null, { type: entry.type, id: entry.id, title: entry.title, score: Number(entry.average).toFixed(1) });
+    line.insertBefore(el("span", { className: "rank", text: String(at + 1) }), line.firstChild);
+    line.querySelector(".when").textContent = t("ui.community.average", Number(entry.average).toFixed(1), entry.count);
+    body.appendChild(line);
+  });
 }
 
 async function drawFriends(body) {
@@ -2797,6 +2835,83 @@ async function poll() {
   }
 }
 
+// ---------------------------------------------------------------- arrow keys
+
+/** Whether an element takes typing, where the arrow keys belong to it. */
+function isTyping(node) {
+  if (!node) return false;
+  const tag = node.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || node.isContentEditable;
+}
+
+/** Moving around with the arrow keys alone, the way a television remote
+ *  does: from whatever has focus to the nearest control in that direction,
+ *  by where things are on the screen rather than by their order in the page
+ *  -- so down from a poster goes to the poster below it, not to the next
+ *  one in the row. Enter presses, Backspace goes back. Nothing changes for a
+ *  mouse, and a slider, a text box or a list box keeps its own arrows. */
+function spatial(event) {
+  const dirs = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  const dir = dirs[event.key];
+  if (!dir || event.altKey || event.ctrlKey || event.metaKey) return;
+  const active = document.activeElement;
+  if (isTyping(active) || (active && active.closest('[role="slider"], [role="radiogroup"], #menu'))) return;
+  const view = [...document.querySelectorAll(".view")].find((section) => !section.hidden);
+  const scope = [document.getElementById("nav"), view, document.getElementById("loading")].filter(
+    (node) => node && !node.hidden
+  );
+  const visible = (node) => {
+    // A card's menu button shows on hover only: Tab still reaches it, the
+    // arrows go to the card.
+    if (node.disabled || node.closest("[hidden]") || node.classList.contains("card-more")) return false;
+    const box = node.getBoundingClientRect();
+    return box.width > 0 && box.height > 0;
+  };
+  const all = scope
+    .flatMap((root) => [...root.querySelectorAll('button, a[href], [tabindex="0"]')])
+    .filter(visible);
+  if (!all.length) return;
+  event.preventDefault();
+  if (!active || active === document.body || !all.includes(active)) {
+    // Nothing focused yet: the first poster on the page, or the first
+    // control.
+    const first = all.find((node) => node.classList.contains("card")) || all[0];
+    first.focus();
+    return;
+  }
+  const from = active.getBoundingClientRect();
+  const cx = from.left + from.width / 2;
+  const cy = from.top + from.height / 2;
+  let best = null;
+  let bestScore = Infinity;
+  for (const node of all) {
+    if (node === active) continue;
+    const box = node.getBoundingClientRect();
+    const x = box.left + box.width / 2 - cx;
+    const y = box.top + box.height / 2 - cy;
+    // Along the direction it must go forward; across it, it should stay
+    // close. Being off to the side costs twice what distance does.
+    const along = x * dir[0] + y * dir[1];
+    if (along <= 1) continue;
+    // Left and right stay on the same row: at the end of a row the focus
+    // stops, as it does on a television, rather than jumping to whatever
+    // happens to be further right higher up the page.
+    if (dir[0] !== 0) {
+      const middle = box.top + box.height / 2;
+      if (middle < from.top || middle > from.bottom) continue;
+    }
+    const across = Math.abs(x * dir[1] + y * dir[0]);
+    const score = along + across * 2;
+    if (score < bestScore) {
+      bestScore = score;
+      best = node;
+    }
+  }
+  if (!best) return;
+  best.focus({ preventScroll: true });
+  best.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+}
+
 // --------------------------------------------------------------------- boot
 
 let STRINGS = { locale: "en", locales: [] };
@@ -2909,7 +3024,16 @@ async function boot() {
     }
   });
 
+  document.addEventListener("keydown", spatial);
   document.addEventListener("keydown", (event) => {
+    // Backspace goes back too, as a remote's Back does -- not while typing.
+    if (event.key === "Backspace" && !isTyping(document.activeElement)) {
+      if (!document.getElementById("view-detail").hidden) {
+        event.preventDefault();
+        go(LAST);
+        return;
+      }
+    }
     if (event.key === "Escape") {
       if (!document.getElementById("menu").hidden) closeMenu(true);
       else if (!dialog.hidden) closeDialog();

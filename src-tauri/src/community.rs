@@ -140,6 +140,7 @@ fn allowed(method: &str, path: &str) -> bool {
             | ("GET", ["me", "export"])
             | ("PUT" | "DELETE", ["ratings", _, _])
             | ("GET", ["titles", _, _])
+            | ("GET", ["top", _])
             | ("GET", ["users"] | ["users", _])
             | ("GET", ["friends"] | ["feed"])
             | ("POST" | "DELETE", ["friends", _])
@@ -239,6 +240,7 @@ mod tests {
     fn only_the_contract_can_be_called() {
         assert!(allowed("POST", "/v0/sessions"));
         assert!(allowed("GET", "/v0/titles/movie/tt0111161"));
+        assert!(allowed("GET", "/v0/top/movie?page=2"));
         assert!(allowed("GET", "/v0/users?q=ali"));
         assert!(allowed("PUT", "/v0/ratings/series/tt0903747"));
         assert!(allowed("POST", "/v0/friends/ayse_1"));
