@@ -1510,6 +1510,7 @@ pub fn about(session: &Session) -> AboutView {
             "eon-torrents/",
             "eon-subtitles/",
             "eon-speeds.json",
+            "eon-ratings.json",
             "eon-webview/",
         ]
         .iter()

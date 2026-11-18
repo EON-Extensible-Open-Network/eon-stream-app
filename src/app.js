@@ -241,6 +241,7 @@ function go(target) {
   } else if (target === "new") openNew();
   else if (target === "discover") openDiscover();
   else if (target === "calendar") openCalendar();
+  else if (target === "profile") openProfile();
   else if (target === "library") openLibrary();
   else if (target === "addons") loadAddons();
   else if (target === "settings") loadSettings();
@@ -1182,6 +1183,7 @@ async function openDetail(contentType, id) {
     facts,
     detail.description ? el("p", { className: "overview", text: detail.description }) : null,
     actions,
+    ratingBox(detail),
   ]);
   if (detail.cast.length || detail.director.length) {
     // Each name searches every addon for it.
@@ -1237,6 +1239,159 @@ async function openDetail(contentType, id) {
       more.appendChild(grid);
     })
     .catch(() => more.remove());
+}
+
+/** The viewer's own score of a title, out of ten, and an optional review.
+ *  Kept on this machine; nothing here is sent anywhere. */
+function ratingBox(detail) {
+  const box = el("div", { className: "my-rating" });
+  const stars = el("div", { className: "stars", attrs: { role: "radiogroup", "aria-label": t("ui.rating.yours") } });
+  const said = el("span", { className: "rating-said" });
+  const write = el("button", { className: "text-button", attrs: { type: "button" } });
+  const remove = el("button", { className: "text-button quiet", attrs: { type: "button" }, text: t("ui.rating.remove") });
+  const editor = el("div", { className: "review-editor" });
+  editor.hidden = true;
+  const area = el("textarea", {
+    attrs: { rows: "4", maxlength: "5000", "aria-label": t("ui.rating.review"), placeholder: t("ui.rating.placeholder") },
+  });
+  const save = el("button", { className: "button play", attrs: { type: "button" }, text: t("ui.rating.save") });
+  editor.appendChild(area);
+  editor.appendChild(save);
+  let current = null;
+
+  const store = async (score, review) => {
+    try {
+      current = await invoke("rating_set", { contentType: detail.content_type, id: detail.id, score, review });
+    } catch (error) {
+      toast(error);
+      return;
+    }
+    draw();
+  };
+  const draw = () => {
+    const score = current ? current.score : 0;
+    clear(stars);
+    for (let n = 1; n <= 10; n += 1) {
+      const star = el("button", {
+        className: `star${n <= score ? " on" : ""}`,
+        attrs: { type: "button", role: "radio", "aria-checked": String(n === score), "aria-label": t("ui.rating.give", n), title: String(n) },
+        onClick: () => store(n, current ? current.review : null),
+      });
+      star.appendChild(icon("star"));
+      stars.appendChild(star);
+    }
+    said.textContent = score ? t("ui.rating.yourscore", score) : t("ui.rating.prompt");
+    write.textContent = current && current.review ? t("ui.rating.edit") : t("ui.rating.write");
+    write.hidden = !current;
+    remove.hidden = !current;
+    area.value = current && current.review ? current.review : "";
+  };
+  write.addEventListener("click", () => {
+    editor.hidden = !editor.hidden;
+    if (!editor.hidden) area.focus();
+  });
+  save.addEventListener("click", async () => {
+    await store(current ? current.score : 7, area.value);
+    editor.hidden = true;
+    toast(t("ui.rating.saved"));
+  });
+  remove.addEventListener("click", () => store(null, null));
+
+  box.appendChild(el("div", { className: "rating-line" }, [stars, said, write, remove]));
+  box.appendChild(editor);
+  invoke("rating_get", { contentType: detail.content_type, id: detail.id })
+    .then((found) => {
+      current = found;
+      draw();
+    })
+    .catch(() => draw());
+  return box;
+}
+
+// ------------------------------------------------------------------- profile
+
+const PROFILE = { order: "recent" };
+
+async function openProfile() {
+  showView("profile");
+  const stats = document.getElementById("profile-stats");
+  const grid = document.getElementById("profile-grid");
+  const order = document.getElementById("profile-order");
+  clear(stats);
+  clear(grid);
+  const view = await ask("profile");
+
+  if (view.count === 0) {
+    grid.appendChild(el("div", { className: "spinner", text: t("ui.profile.empty") }));
+    order.closest(".discover-bar").hidden = true;
+    return;
+  }
+  order.closest(".discover-bar").hidden = false;
+
+  // The numbers, and the shape of the scores.
+  const number = (value, key) => el("div", { className: "stat" }, [el("strong", { text: value }), el("span", { text: t(key) })]);
+  stats.appendChild(
+    el("div", { className: "stat-row" }, [
+      number(String(view.count), "ui.profile.count"),
+      number(view.average === null ? "—" : view.average.toFixed(1), "ui.profile.average"),
+      number(String(view.reviews), "ui.profile.reviews"),
+    ])
+  );
+  const most = Math.max(1, ...view.histogram);
+  const bars = el("div", { className: "histogram", attrs: { role: "img", "aria-label": t("ui.profile.histogram") } });
+  view.histogram.forEach((n, at) => {
+    const fill = el("i");
+    fill.style.height = `${Math.round((n / most) * 100)}%`;
+    const bar = el("div", { className: "hist-bar" }, [fill, el("span", { text: String(at + 1) })]);
+    bar.title = t("ui.profile.bar", at + 1, n);
+    bars.appendChild(bar);
+  });
+  stats.appendChild(bars);
+  if (view.liked_genres.length) {
+    const chips = el("div", { className: "chips" });
+    for (const [genre, n] of view.liked_genres) {
+      chips.appendChild(
+        el("button", {
+          className: "chip",
+          attrs: { type: "button" },
+          text: `${genre} · ${n}`,
+          onClick: () => openDiscoverAt("movie", genre),
+        })
+      );
+    }
+    stats.appendChild(el("div", { className: "liked" }, [el("span", { className: "filter-name", text: t("ui.profile.liked") }), chips]));
+  }
+
+  clear(order);
+  for (const [value, key] of [
+    ["recent", "ui.profile.recent"],
+    ["high", "ui.profile.high"],
+    ["low", "ui.profile.low"],
+  ]) {
+    order.appendChild(el("option", { text: t(key), attrs: { value } }));
+  }
+  order.value = PROFILE.order;
+  order.onchange = () => {
+    PROFILE.order = order.value;
+    openProfile();
+  };
+  const items = [...view.items];
+  if (PROFILE.order === "high") items.sort((a, b) => b.score - a.score || b.at - a.at);
+  if (PROFILE.order === "low") items.sort((a, b) => a.score - b.score || b.at - a.at);
+  const cards = document.createDocumentFragment();
+  for (const item of items) {
+    const shown = card({
+      id: item.id,
+      content_type: item.content_type,
+      name: item.name,
+      poster: item.poster,
+      year: item.year,
+      rating: String(item.score),
+    });
+    if (item.review) shown.title = item.review;
+    cards.appendChild(shown);
+  }
+  grid.appendChild(cards);
 }
 
 function backButton() {

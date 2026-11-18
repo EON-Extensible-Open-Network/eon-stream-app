@@ -546,6 +546,41 @@ pub async fn subtitle_languages(
 
 // ------------------------------------------------------------------- keeping
 
+/// The viewer's own score of a title, if they gave one.
+#[tauri::command]
+pub async fn rating_get(
+    state: State<'_, Shared>,
+    content_type: String,
+    id: String,
+) -> Out<Option<crate::ratings::Rating>> {
+    with_session(&state, move |session| {
+        Ok(session.ratings.get(&content_type, &id).cloned())
+    })
+    .await
+}
+
+/// Score a title out of ten, with an optional review; no score takes it
+/// away. Kept on this machine only.
+#[tauri::command]
+pub async fn rating_set(
+    state: State<'_, Shared>,
+    content_type: String,
+    id: String,
+    score: Option<u8>,
+    review: Option<String>,
+) -> Out<Option<crate::ratings::Rating>> {
+    with_session(&state, move |session| {
+        crate::ratings::set(session, &content_type, &id, score, review)
+    })
+    .await
+}
+
+/// The viewer's profile: every score, and what they add up to.
+#[tauri::command]
+pub async fn profile(state: State<'_, Shared>) -> Out<crate::ratings::ProfileView> {
+    with_session(&state, |session| Ok(crate::ratings::profile(session))).await
+}
+
 /// The whole library, for its page.
 #[tauri::command]
 pub async fn library(state: State<'_, Shared>, order: String) -> Out<Vec<view::ItemView>> {

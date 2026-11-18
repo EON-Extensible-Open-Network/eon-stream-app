@@ -42,6 +42,7 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
           <span data-say="ui.nav.calendar"></span><span id="calendar-dot" class="dot" hidden></span>
         </button>
         <button class="link" type="button" data-go="library" data-say="ui.nav.library"></button>
+        <button class="link" type="button" data-go="profile" data-say="ui.nav.profile"></button>
         <button class="link" type="button" data-go="addons" data-say="ui.nav.addons"></button>
       </nav>
       <div class="nav-tools">
@@ -113,6 +114,17 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
         <h2 class="page-title" data-say="ui.nav.calendar"></h2>
         <p id="calendar-note" class="lede" hidden></p>
         <div id="calendar-list" class="calendar"></div>
+      </section>
+
+      <!-- The viewer's own scores and reviews, kept on this machine. -->
+      <section class="view page" id="view-profile" hidden>
+        <h2 class="page-title" data-say="ui.nav.profile"></h2>
+        <p class="lede" data-say="ui.profile.local"></p>
+        <div id="profile-stats" class="profile-stats"></div>
+        <div class="discover-bar">
+          <label class="pick"><span data-say="ui.sources.sort"></span><select id="profile-order" class="sort-select"></select></label>
+        </div>
+        <div id="profile-grid" class="grid"></div>
       </section>
 
       <section class="view page" id="view-library" hidden>

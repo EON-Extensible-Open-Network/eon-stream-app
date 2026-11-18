@@ -123,7 +123,8 @@ share these files: `eon-addons.json`, `eon-history.json`, `eon-library.json`,
 pieces (discarded on exit unless you set `torrent.keepFiles`), `eon-subtitles/`
 for subtitles fetched for what is playing (emptied at every start and on exit),
 `eon-speeds.json` for how fast each torrent you played came in (info hashes and
-numbers only, for sorting sources by speed),
+numbers only, for sorting sources by speed), `eon-ratings.json` for your own
+scores and reviews,
 and `eon-webview/`, the window's browser profile. Builds up to `v0.17` put that
 profile in `%LOCALAPPDATA%\org.eonstream.stream` instead; that folder can be
 deleted. Delete any of them to start that part over.

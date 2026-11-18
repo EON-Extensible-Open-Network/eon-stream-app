@@ -1725,6 +1725,150 @@ button.pill:focus-visible {
   display: none;
 }
 
+/* ------------------------------------------------------------------ ratings */
+
+.my-rating {
+  margin-top: 18px;
+}
+
+.rating-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.stars {
+  display: flex;
+  gap: 2px;
+}
+
+.star {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.star .icon {
+  width: 22px;
+  height: 22px;
+}
+
+.star.on {
+  color: #f5c518;
+}
+
+.star.on .icon path {
+  fill: currentColor;
+}
+
+.star:hover,
+.star:focus-visible {
+  color: #f5c518;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.rating-said {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.text-button.quiet {
+  color: var(--muted);
+}
+
+.review-editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  max-width: 640px;
+}
+
+.review-editor textarea {
+  width: 100%;
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.review-editor .button {
+  justify-self: start;
+}
+
+.profile-stats {
+  display: grid;
+  gap: 22px;
+  margin: 8px 0 26px;
+}
+
+.stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.stat {
+  min-width: 140px;
+  padding: 14px 18px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  display: grid;
+  gap: 2px;
+}
+
+.stat strong {
+  font-size: 28px;
+  font-family: var(--display);
+}
+
+.stat span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.histogram {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 110px;
+  max-width: 520px;
+}
+
+.histogram .hist-bar {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+
+.histogram i {
+  display: block;
+  width: 100%;
+  min-height: 2px;
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+}
+
+.histogram span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.liked {
+  display: grid;
+  gap: 8px;
+}
+
 /* ----------------------------------------------------------------- calendar */
 
 .link .dot {

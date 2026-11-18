@@ -15,6 +15,21 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.26] — 2026-11-18 — your own scores, on your own machine
+
+### Added
+- **Score anything out of ten**, from its page, with an optional review of up to 5000
+  characters. Change it or take it away the same way.
+- **My profile**: every title you scored, with how many, your average, how your scores
+  spread from 1 to 10, and the genres you score highest — each a way into Discover. Sorted
+  by most recent, highest or lowest.
+- Scores are kept in `eon-ratings.json` beside the executable, with the title's name,
+  poster address, year and genres as they were when scored, so the profile draws without
+  asking an addon about every title again. **Nothing here is sent anywhere.** That is
+  madde 7: the viewer is fully usable without an account, and anything shared with other
+  people comes with a separate sign-in — which does not exist yet (madde 30's gate for a
+  backend with accounts is not met), and is not pretended here.
+
 ## [v0.25] — 2026-11-18 — the fastest source, and a way to it when one is slow
 
 ### Added

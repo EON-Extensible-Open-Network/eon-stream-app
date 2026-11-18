@@ -47,6 +47,7 @@ mod buffer;
 mod commands;
 mod http;
 mod keeper;
+mod ratings;
 mod speeds;
 mod state;
 mod subs;
@@ -145,6 +146,9 @@ fn window(play: Option<String>) {
             commands::feature,
             commands::sources,
             commands::library,
+            commands::rating_get,
+            commands::rating_set,
+            commands::profile,
             commands::more_like,
             commands::calendar,
             commands::trailer,

@@ -229,6 +229,8 @@ pub struct Session {
     /// the rest.
     pub starting_source: Option<usize>,
     pub tried: Vec<usize>,
+    /// The viewer's own scores and reviews (madde 7: no account needed).
+    pub ratings: crate::ratings::Ratings,
 }
 
 impl Session {
@@ -279,6 +281,7 @@ impl Session {
             speeds: crate::speeds::Speeds::load(),
             starting_source: None,
             tried: Vec::new(),
+            ratings: crate::ratings::Ratings::load(),
         }
     }
 
