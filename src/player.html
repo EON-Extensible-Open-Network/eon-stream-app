@@ -35,7 +35,10 @@ headless build's prompt uses.
       <div id="waiting" class="waiting" hidden>
         <div class="spinner" aria-hidden="true"></div>
         <p id="waiting-line" class="waiting-line" role="status"></p>
-        <button id="abandon" class="abandon" type="button" data-say="ui.player.abandon"></button>
+        <div class="waiting-actions">
+          <button id="faster" class="abandon faster" type="button" data-say="ui.player.faster" hidden></button>
+          <button id="abandon" class="abandon" type="button" data-say="ui.player.abandon"></button>
+        </div>
       </div>
       <div id="flash" class="flash" aria-hidden="true"></div>
     </div>

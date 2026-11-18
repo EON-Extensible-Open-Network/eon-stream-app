@@ -123,6 +123,9 @@ pub struct Resolved {
     pub handle: TorrentHandle,
     /// Which file inside it is playing.
     pub index: usize,
+    /// How fast the prebuffer came in, in bytes per second, when it had to
+    /// be fetched at all.
+    pub measured_bps: Option<u64>,
 }
 
 /// The answer a worker gives when the viewer gave up while it waited.
@@ -180,8 +183,18 @@ pub fn resolve(
     report(job, ticket, "ui.job.picked", file.name().to_owned());
 
     let mut last = Instant::now();
+    let began = Instant::now();
+    // (bytes there at the first look, bytes the prebuffer wanted)
+    let mut fetched = (u64::MAX, 0u64);
     engine
         .wait_for_prebuffer(&handle, index, PREBUFFER_TIMEOUT, |have, want| {
+            // Every call, not just the ones that redraw: what was there at
+            // the first look, and what the prebuffer wants -- the engine
+            // returns without a last call once it has it.
+            if fetched.0 == u64::MAX {
+                fetched.0 = have;
+            }
+            fetched.1 = want;
             // Twice a second: faster would redraw a progress bar quicker than
             // it can be read, and lock the job mutex for nothing.
             if last.elapsed() >= Duration::from_millis(500) {
@@ -213,10 +226,26 @@ pub fn resolve(
     let url = engine
         .stream_url(&handle, index)
         .map_err(|e| e.to_string())?;
+    // The speed the prebuffer came in at: what arrived, over how long. A
+    // prebuffer that was already on disk measured nothing.
+    let seconds = began.elapsed().as_secs_f64();
+    // No look at all means it was already on disk.
+    let arrived = if fetched.0 == u64::MAX {
+        0
+    } else {
+        fetched.1.saturating_sub(fetched.0)
+    };
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    let measured_bps = (seconds >= 0.25 && arrived > 0).then(|| (arrived as f64 / seconds) as u64);
     Ok(Resolved {
         source: PlaybackSource::Url(url),
         handle,
         index,
+        measured_bps,
     })
 }
 

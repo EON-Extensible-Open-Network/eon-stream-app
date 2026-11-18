@@ -189,8 +189,10 @@ pub fn watch(shared: &Shared, ticket: u64) {
             break;
         }
     }
-    // Whatever pace the download was held to, it is the viewer's own again.
+    // Whatever pace the download was held to, it is the viewer's own again;
+    // and what was measured is kept.
     if let Ok(session) = shared.lock() {
+        session.speeds.save();
         if let Some(engine) = &session.torrent {
             engine.set_download_limit(user_limit(&session));
         }
@@ -414,6 +416,18 @@ fn tick(shared: &Shared, ticket: u64) -> bool {
         (pace, user) => pace.or(user),
     };
     engine.set_download_limit(effective);
+    // A reading of the swarm's speed, when nothing was holding it back.
+    if effective.is_none() {
+        if let Ok(progress) = engine.progress(&handle) {
+            if !progress.finished {
+                if let Ok(mut session) = shared.lock() {
+                    session
+                        .speeds
+                        .record(handle.info_hash(), progress.download_bps);
+                }
+            }
+        }
+    }
     true
 }
 

@@ -47,6 +47,7 @@ mod buffer;
 mod commands;
 mod http;
 mod keeper;
+mod speeds;
 mod state;
 mod subs;
 mod surface;
@@ -154,6 +155,7 @@ fn window(play: Option<String>) {
             commands::play,
             commands::play_link,
             commands::cancel,
+            commands::play_faster,
             commands::play_next,
             commands::watched_set,
             commands::subtitles,

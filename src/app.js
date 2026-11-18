@@ -1565,6 +1565,7 @@ async function loadSources(contentType, id, name) {
 const SORTS = [
   ["best", "ui.sort.best"],
   ["quality", "ui.sort.quality"],
+  ["fastest", "ui.sort.fastest"],
   ["seeders", "ui.sort.seeders"],
   ["largest", "ui.sort.largest"],
   ["smallest", "ui.sort.smallest"],
@@ -1637,6 +1638,9 @@ function sortedSources(sources) {
       return at === -1 ? Infinity : at;
     },
     seeders: (source) => missingLast(source.seeders, -1),
+    // Measured speed when the source played before, otherwise an estimate
+    // from its seeders; a direct link counts as fast.
+    fastest: (source) => -(source.speed_bps || 0),
     largest: (source) => missingLast(source.size_bytes, -1),
     smallest: (source) => missingLast(source.size_bytes, 1),
   }[SOURCES.sort || "best"];
@@ -1659,6 +1663,7 @@ function sourceRow(source) {
   } else if (source.has_subtitles) {
     tag(t("ui.sources.subs"), "subs");
   }
+  if (source.measured_bps) tag(t("ui.sources.measured", bytes(source.measured_bps)), "speed");
   if (source.seeders !== null && source.seeders !== undefined) tag(t("ui.sources.seeders", source.seeders));
   if (source.size) tag(source.size);
   if (source.is_torrent) tag(t("ui.sources.torrent"));
@@ -2185,6 +2190,14 @@ async function poll() {
         ? `${Math.round(status.job.progress * 100)}%`
         : "0%";
     const torrent = status.torrents[0];
+    // A start that has been slow for a while gets a way to a faster source:
+    // still fetching metadata after twenty seconds, or filling the
+    // prebuffer at under 300 KB/s after fifteen.
+    const waited = STARTING ? (Date.now() - STARTING.since) / 1000 : 0;
+    const slow =
+      (status.job.stage === "ui.job.metadata" && waited > 20) ||
+      (status.job.stage === "ui.job.buffering" && waited > 15 && (!torrent || torrent.down_bps < 300 * 1024));
+    document.getElementById("loading-faster").hidden = !slow;
     document.getElementById("loading-torrent").textContent = torrent
       ? t(
           "ui.torrent.line",
@@ -2307,6 +2320,15 @@ async function boot() {
   };
   document.getElementById("loading-back").addEventListener("click", giveUp);
   document.getElementById("loading-cancel").addEventListener("click", giveUp);
+  document.getElementById("loading-faster").addEventListener("click", async () => {
+    document.getElementById("loading-faster").hidden = true;
+    if (STARTING) STARTING.since = Date.now();
+    try {
+      await invoke("play_faster");
+    } catch (error) {
+      toast(error);
+    }
+  });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {

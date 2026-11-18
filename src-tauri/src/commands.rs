@@ -671,6 +671,10 @@ fn start(
         } else {
             None
         };
+        session.starting_source = Some(index);
+        if !session.tried.contains(&index) {
+            session.tried.push(index);
+        }
         let job = Arc::clone(&session.job);
         let ticket = match ticket {
             // A start that began earlier -- the next episode, whose sources
@@ -717,6 +721,10 @@ fn start(
                     if let Ok(file) = resolved.handle.file(resolved.index) {
                         search.filename = Some(file.name().to_owned());
                         search.size = Some(file.length);
+                    }
+                    if let (Some(bps), Ok(mut session)) = (resolved.measured_bps, shared.lock()) {
+                        session.speeds.record(resolved.handle.info_hash(), bps);
+                        session.speeds.save();
                     }
                     search.torrent = Some((engine, resolved.handle));
                     search.file_index = Some(resolved.index);
@@ -866,6 +874,44 @@ pub async fn watched_set(
     .await
 }
 
+/// Give up on the source that is starting or stalling, and start the fastest
+/// one of the same list not tried yet: by measured speed where there is one,
+/// otherwise by the addon's seeders; a direct link counts as fast.
+#[tauri::command]
+pub async fn play_faster(state: State<'_, Shared>) -> Out<()> {
+    let shared = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || -> Out<()> {
+        let next = {
+            let session = shared
+                .lock()
+                .map_err(|_| "the host lost track of its own state".to_owned())?;
+            let score = |ranked: &eon_stream_core::ranking::RankedStream| -> u64 {
+                match torrents::source_of(&ranked.stream) {
+                    Some(torrent) => torrent
+                        .request
+                        .info_hash()
+                        .ok()
+                        .and_then(|hash| session.speeds.get(&hash))
+                        .unwrap_or_else(|| crate::speeds::estimate(ranked.facts.seeders)),
+                    None => 8 * 1024 * 1024,
+                }
+            };
+            session
+                .sources
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !session.tried.contains(index))
+                .max_by_key(|(index, ranked)| (score(ranked), std::cmp::Reverse(*index)))
+                .map(|(index, _)| index)
+                .ok_or_else(|| session.text("ui.error.nofaster"))?
+        };
+        abandon(&shared)?;
+        start(&shared, next, None, Start::Resume, None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Give up on what is starting or playing, and on what it fetched.
 ///
 /// The button under the spinner. Whatever stage the start is in -- waiting for
@@ -880,49 +926,52 @@ pub async fn watched_set(
 #[tauri::command]
 pub async fn cancel(state: State<'_, Shared>) -> Out<()> {
     let shared = Arc::clone(state.inner());
-    tauri::async_runtime::spawn_blocking(move || -> Out<()> {
-        let (engine, hashes) = {
-            let mut session = shared
-                .lock()
-                .map_err(|_| "the host lost track of its own state".to_owned())?;
-            let mut hashes: Vec<String> = session
-                .job
-                .lock()
-                .ok()
-                .and_then(|mut job| job.cancel())
-                .into_iter()
-                .collect();
-            session.remember_position();
-            if let Some(player) = session.player.take() {
-                let _ = player.quit();
-            }
-            session.playing = None;
-            session.last_seen = None;
-            if let Some(hash) = session.playing_torrent.take() {
-                if !hashes.contains(&hash) {
-                    hashes.push(hash);
-                }
-            }
-            // Ends the subtitle search for this playback too: its ticket no
-            // longer matches. And the cache keeper's watch.
-            session.subtitles = subs::Found::default();
-            session.keeper.torrent = None;
-            session.keeper.source = None;
-            (session.torrent.clone(), hashes)
-        };
-        crate::surface::close_controls();
-        subs::clear_folder();
-        if let Some(engine) = engine {
-            for hash in hashes {
-                if let Ok(handle) = engine.get(&hash) {
-                    let _ = engine.remove(&handle, true);
-                }
+    tauri::async_runtime::spawn_blocking(move || abandon(&shared))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The work of [`cancel`], on the calling thread.
+fn abandon(shared: &Shared) -> Out<()> {
+    let (engine, hashes) = {
+        let mut session = shared
+            .lock()
+            .map_err(|_| "the host lost track of its own state".to_owned())?;
+        let mut hashes: Vec<String> = session
+            .job
+            .lock()
+            .ok()
+            .and_then(|mut job| job.cancel())
+            .into_iter()
+            .collect();
+        session.remember_position();
+        if let Some(player) = session.player.take() {
+            let _ = player.quit();
+        }
+        session.playing = None;
+        session.last_seen = None;
+        if let Some(hash) = session.playing_torrent.take() {
+            if !hashes.contains(&hash) {
+                hashes.push(hash);
             }
         }
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        // Ends the subtitle search for this playback too: its ticket no
+        // longer matches. And the cache keeper's watch.
+        session.subtitles = subs::Found::default();
+        session.keeper.torrent = None;
+        session.keeper.source = None;
+        (session.torrent.clone(), hashes)
+    };
+    crate::surface::close_controls();
+    subs::clear_folder();
+    if let Some(engine) = engine {
+        for hash in hashes {
+            if let Ok(handle) = engine.get(&hash) {
+                let _ = engine.remove(&handle, true);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// What subtitles were found for what is playing.

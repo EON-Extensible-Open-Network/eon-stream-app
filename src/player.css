@@ -728,3 +728,20 @@ body.sleep .top .control {
   font-size: 14px;
   line-height: 1.45;
 }
+
+.waiting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.abandon.faster {
+  color: #0a0c12;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.abandon.faster:hover,
+.abandon.faster:focus-visible {
+  background: #fff;
+}

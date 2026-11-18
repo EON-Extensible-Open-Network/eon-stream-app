@@ -222,6 +222,13 @@ pub struct Session {
     pub calendar: Option<(u64, String, crate::view::CalendarView)>,
     /// The cache limit's bookkeeping for what is playing.
     pub keeper: crate::keeper::Keeper,
+    /// Measured torrent speeds, for sorting sources by speed.
+    pub speeds: crate::speeds::Speeds,
+    /// The source of the current list being started or played, and every
+    /// source of this list already tried: "try a faster source" picks among
+    /// the rest.
+    pub starting_source: Option<usize>,
+    pub tried: Vec<usize>,
 }
 
 impl Session {
@@ -269,6 +276,9 @@ impl Session {
             subtitles: crate::subs::Found::default(),
             calendar: None,
             keeper: crate::keeper::Keeper::default(),
+            speeds: crate::speeds::Speeds::load(),
+            starting_source: None,
+            tried: Vec::new(),
         }
     }
 

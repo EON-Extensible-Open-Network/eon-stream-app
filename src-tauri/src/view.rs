@@ -198,6 +198,11 @@ pub struct SourceView {
     /// The same, as a number, for sorting by it.
     pub size_bytes: Option<u64>,
     pub seeders: Option<u32>,
+    /// How fast it was when it last played, measured, in bytes per second.
+    pub measured_bps: Option<u64>,
+    /// What to sort by speed on: the measured speed, or an estimate from the
+    /// seeders when it never played.
+    pub speed_bps: u64,
     /// Audio languages the source says it carries -- what a dub is. Two-letter
     /// codes where the language table knows the label, so the interface can
     /// filter on them and name them in its own language; the addon's own
@@ -1269,6 +1274,19 @@ pub fn sources(
             size: source.facts.size_bytes.map(format_size),
             size_bytes: source.facts.size_bytes,
             seeders: source.facts.seeders,
+            measured_bps: crate::torrents::source_of(&source.stream)
+                .and_then(|torrent| torrent.request.info_hash().ok())
+                .and_then(|hash| session.speeds.get(&hash)),
+            speed_bps: match crate::torrents::source_of(&source.stream) {
+                Some(torrent) => torrent
+                    .request
+                    .info_hash()
+                    .ok()
+                    .and_then(|hash| session.speeds.get(&hash))
+                    .unwrap_or_else(|| crate::speeds::estimate(source.facts.seeders)),
+                // A direct link is served by a host, not a swarm.
+                None => 8 * 1024 * 1024,
+            },
             languages: language_codes(source.facts.audio_languages.iter().map(String::as_str)),
             subtitle_languages: language_codes(
                 source
@@ -1289,6 +1307,8 @@ pub fn sources(
 
     let qualities = buckets(&ranked);
     session.sources = ranked;
+    session.tried.clear();
+    session.starting_source = None;
     session.subject = Some((content_type.to_owned(), id.to_owned(), name.to_owned()));
 
     Ok(SourcesView {
@@ -1489,6 +1509,7 @@ pub fn about(session: &Session) -> AboutView {
             "eon-trust.json",
             "eon-torrents/",
             "eon-subtitles/",
+            "eon-speeds.json",
             "eon-webview/",
         ]
         .iter()

@@ -25,6 +25,7 @@ let STATE = null;
 let SLEEP_TIMER = null;
 let SCRUBBING = null;
 let VOLUME_HELD = 0;
+let WAITING_SINCE = 0;
 
 function t(key, ...args) {
   const text = MESSAGES[key];
@@ -225,6 +226,13 @@ async function poll() {
   const waitingNow = player.buffering || starting;
   const waiting = $("waiting");
   if (waiting.hidden !== !waitingNow) waiting.hidden = !waitingNow;
+  // Waiting for a while on a slow swarm: offer the next-fastest source.
+  if (!waitingNow) WAITING_SINCE = 0;
+  else if (!WAITING_SINCE) WAITING_SINCE = Date.now();
+  const stalled = waitingNow && Date.now() - WAITING_SINCE > 15000;
+  const slowTorrent = !status.torrents || !status.torrents[0] || status.torrents[0].down_bps < 300 * 1024;
+  const offer = stalled && slowTorrent;
+  if ($("faster").hidden !== !offer) $("faster").hidden = !offer;
   if (waitingNow) {
     wake();
     const torrent = status.torrents && status.torrents[0];
@@ -723,6 +731,15 @@ async function boot() {
   $("back").addEventListener("click", () => act("stop"));
   $("stop").addEventListener("click", () => act("stop"));
   $("abandon").addEventListener("click", abandon);
+  $("faster").addEventListener("click", async () => {
+    $("faster").hidden = true;
+    WAITING_SINCE = Date.now();
+    try {
+      await invoke("play_faster");
+    } catch (error) {
+      put($("waiting-line"), String(error));
+    }
+  });
   $("next").addEventListener("click", playNext);
   for (const button of document.querySelectorAll("[data-tune]")) {
     button.addEventListener("click", () => nudge(button.dataset.tune, Number(button.dataset.by)));

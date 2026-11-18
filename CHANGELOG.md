@@ -15,6 +15,30 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.25] — 2026-11-18 — the fastest source, and a way to it when one is slow
+
+### Added
+- **Sort sources by speed.** A source that played before is sorted by how fast it really
+  came in, and shows it ("6.4 MB/s when it last played"); one that never played, by an
+  estimate from its seeders, kept modest so a measured source is not buried under a big,
+  stale count; a direct link counts as fast. Speeds are measured while the prebuffer fills
+  and while a torrent plays unthrottled, kept as a running average per info hash in
+  `eon-speeds.json` beside the executable — info hashes and numbers, no titles, at most a
+  thousand.
+- **"Try a faster source."** A start still fetching metadata after twenty seconds, or
+  filling its prebuffer at under 300 KB/s after fifteen, offers the fastest source of the
+  same list not tried yet — on the loading screen and under the player's spinner. It gives
+  up on the slow one the way "Cancel and go back" does, pieces and all, and starts the
+  next. Measured: a dead swarm was offered a way out after 21 seconds, and the next source
+  was playing four seconds after the press.
+
+### Not done, and why
+- **Measuring a swarm live before playing.** The DHT can be asked how many peers a torrent
+  has, and that was built and tested — and it counted fourteen peers for a made-up info
+  hash and one for a healthy swarm in the same eight seconds. DHT peer lists are polluted;
+  a count from them would sort sources worse than the seeders do. It was taken out rather
+  than shipped.
+
 ## [v0.24] — 2026-11-18 — the cache stays inside the space you give it
 
 ### Fixed

@@ -1514,8 +1514,16 @@ main {
   max-width: min(640px, 86vw);
 }
 
-.loading-cancel {
+.loading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-top: 22px;
+}
+
+.tag.speed {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .loading-body h2 {
