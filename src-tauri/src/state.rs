@@ -235,6 +235,8 @@ pub struct Session {
     pub community: crate::community::Community,
     /// Titles downloaded to watch later: never cache.
     pub downloads: crate::downloads::Downloads,
+    /// Who is watching: whose history, library and scores these are.
+    pub profiles: crate::profiles::Profiles,
 }
 
 impl Session {
@@ -245,6 +247,7 @@ impl Session {
         let messages = Messages::for_locale(&settings.language)
             .or_else(|_| Messages::for_locale(i18n::FALLBACK_LOCALE))
             .ok();
+        let profiles = crate::profiles::Profiles::load();
         let modules = read_json(&beside_exe("eon-modules.json"), |json| {
             ModuleStore::from_json(json, BuildProfile::Stream)
         })
@@ -254,10 +257,16 @@ impl Session {
             client: AddonClient::new(Http::new()),
             registry: read_json(&beside_exe("eon-addons.json"), AddonRegistry::from_json)
                 .unwrap_or_default(),
-            history: read_json(&beside_exe("eon-history.json"), WatchHistory::from_json)
-                .unwrap_or_default(),
-            library: read_json(&beside_exe("eon-library.json"), Library::from_json)
-                .unwrap_or_default(),
+            history: read_json(
+                &crate::profiles::file(&profiles.current, "eon-history.json"),
+                WatchHistory::from_json,
+            )
+            .unwrap_or_default(),
+            library: read_json(
+                &crate::profiles::file(&profiles.current, "eon-library.json"),
+                Library::from_json,
+            )
+            .unwrap_or_default(),
             // Read, never written: the trust set is a statement about this
             // machine, and this program is not the one that gets to change it
             // (madde 30).
@@ -285,9 +294,10 @@ impl Session {
             speeds: crate::speeds::Speeds::load(),
             starting_source: None,
             tried: Vec::new(),
-            ratings: crate::ratings::Ratings::load(),
+            ratings: crate::ratings::Ratings::load(&profiles.current),
             community: crate::community::Community::load(),
             downloads: crate::downloads::Downloads::load(),
+            profiles,
         }
     }
 
@@ -361,11 +371,49 @@ impl Session {
     }
 
     pub fn save_history(&self) {
-        write_json(&beside_exe("eon-history.json"), self.history.to_json());
+        write_json(
+            &crate::profiles::file(&self.profiles.current, "eon-history.json"),
+            self.history.to_json(),
+        );
     }
 
     pub fn save_library(&self) {
-        write_json(&beside_exe("eon-library.json"), self.library.to_json());
+        write_json(
+            &crate::profiles::file(&self.profiles.current, "eon-library.json"),
+            self.library.to_json(),
+        );
+    }
+
+    /// Change who is watching: what the session holds of the last profile is
+    /// written down, and the next one's history, library and scores are read.
+    ///
+    /// # Errors
+    ///
+    /// As a message key: no such profile.
+    pub fn switch_profile(&mut self, id: &str) -> Result<(), &'static str> {
+        if !self.profiles.profiles.iter().any(|p| p.id == id) {
+            return Err("ui.profiles.unknown");
+        }
+        self.remember_position();
+        self.save_history();
+        self.save_library();
+        self.ratings.save(&self.profiles.current);
+        self.profiles.current = id.to_owned();
+        self.profiles.save();
+        self.history = read_json(
+            &crate::profiles::file(id, "eon-history.json"),
+            WatchHistory::from_json,
+        )
+        .unwrap_or_default();
+        self.library = read_json(
+            &crate::profiles::file(id, "eon-library.json"),
+            Library::from_json,
+        )
+        .unwrap_or_default();
+        self.ratings = crate::ratings::Ratings::load(id);
+        // What was worked out for the last profile is theirs.
+        self.calendar = None;
+        Ok(())
     }
 
     pub fn save_settings(&self) {

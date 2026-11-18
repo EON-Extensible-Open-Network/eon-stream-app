@@ -49,6 +49,7 @@ mod community;
 mod downloads;
 mod http;
 mod keeper;
+mod profiles;
 mod ratings;
 mod speeds;
 mod state;
@@ -157,6 +158,12 @@ fn window(play: Option<String>) {
             commands::rating_get,
             commands::rating_set,
             commands::profile,
+            commands::profiles,
+            commands::profile_add,
+            commands::profile_switch,
+            commands::profile_edit,
+            commands::profile_remove,
+            commands::onboarding_done,
             commands::download,
             commands::downloads,
             commands::download_play,

@@ -15,6 +15,42 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.3] — 2026-11-18 — everyone on the computer, from the first minute
+
+The thirtieth alpha, and the largest step since the window arrived: the program now knows
+who is watching, greets someone opening it for the first time, and is reorganised around
+that. It also closes a line of twelve releases (`v0.18`–`v0.29`) that took the window from
+"plays a torrent" to most of what a streaming service does — see those entries below.
+
+### Added
+- **Profiles — "Who is watching?"** Up to eight people on one computer, each with their
+  own continue watching, library, scores and the rows built from them. A profile is local
+  and is not an account (madde 7): no password, nothing sent anywhere. What belongs to the
+  computer stays shared — addons, settings, the cache, downloads. The first profile keeps
+  its files where they always were, so a library from before this release is simply its
+  library; others live in `eon-profiles/<id>/`. With more than one profile the program
+  opens on the picker; the avatar in the top bar switches, and profiles can be renamed,
+  recoloured and deleted (the first and the current one cannot be).
+- **A first-run setup**, four short steps: a name for your profile; the interface language
+  and the subtitle language to switch on; how much disk streaming may use, offering only
+  what the disk has; and what an addon is — since EON Stream comes with no content of its
+  own (madde 9) — with a box to add the first one. Skippable, shown once. A copy from
+  before this release, which already has addons, skips it.
+- **Rows of the genres you score highest** on the home screen: the first addon catalogue
+  that can be narrowed to each of a profile's two highest-scored genres, narrowed to it,
+  labelled for what it is ("Because you score Drama high"). The addon's catalogue — this
+  program judges nothing "for you".
+- **The billboard turns** through the first five titles of the first catalogue, one every
+  twelve seconds, with dots to pick one — never while it is pointed at or focused, never on
+  another page or a hidden window, and not at all for someone who asked for reduced motion.
+  Each backdrop is asked for once.
+
+### Changed
+- **The top bar is the catalogue, the avatar is you.** Home, series, films, new & popular,
+  discover and the library stay in the bar; your profile, the calendar, downloads, the
+  community, addons and settings are in the avatar's menu, with switching profile. The
+  calendar's count of series with something new rides on the avatar.
+
 ## [v0.29] — 2026-11-18 — downloads, to watch without a connection
 
 ### Added

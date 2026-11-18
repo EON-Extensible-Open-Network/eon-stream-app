@@ -397,6 +397,329 @@ async function loadRows() {
   }));
   renderHome();
   addNewEpisodes();
+  addYourGenres();
+}
+
+// ------------------------------------------------------------------ profiles
+
+/** The six avatar colours, as CSS classes. */
+const AVATARS = 6;
+let PROFILES = { profiles: [], current: "main", onboarded: true };
+
+function profileName(profile) {
+  return profile.name || t("ui.profiles.main");
+}
+
+function avatar(profile, size = "") {
+  return el("span", {
+    className: `avatar c${profile.color % AVATARS} ${size}`.trim(),
+    text: (profileName(profile).trim()[0] || "?").toLocaleUpperCase(),
+    attrs: { "aria-hidden": "true" },
+  });
+}
+
+async function loadProfiles() {
+  PROFILES = await invoke("profiles");
+  const me = PROFILES.profiles.find((p) => p.id === PROFILES.current) || PROFILES.profiles[0];
+  const button = document.getElementById("who-open");
+  clear(button);
+  button.appendChild(avatar(me, "small"));
+  button.setAttribute("aria-label", t("ui.profiles.switch", profileName(me)));
+  button.title = t("ui.profiles.switch", profileName(me));
+  return PROFILES;
+}
+
+/** "Who is watching?" -- every profile, a way to add one, and a way to
+ *  change them. */
+function openWho(editing = false) {
+  const layer = document.getElementById("who");
+  const grid = document.getElementById("who-grid");
+  clear(grid);
+  document.getElementById("who-title").textContent = editing ? t("ui.profiles.manage") : t("ui.profiles.who");
+  for (const profile of PROFILES.profiles) {
+    const tile = el(
+      "button",
+      {
+        className: `who-tile${profile.id === PROFILES.current ? " current" : ""}`,
+        attrs: { type: "button" },
+        onClick: () => (editing ? editProfile(profile) : switchTo(profile.id)),
+      },
+      [avatar(profile, "big"), el("span", { className: "who-name", text: profileName(profile) })]
+    );
+    if (editing) tile.appendChild(el("span", { className: "who-edit", text: t("ui.profiles.edit") }));
+    grid.appendChild(tile);
+  }
+  if (!editing && PROFILES.profiles.length < 8) {
+    const add = el("button", { className: "who-tile add", attrs: { type: "button" }, onClick: () => editProfile(null) }, [
+      el("span", { className: "avatar big plus" }, [icon("plus")]),
+      el("span", { className: "who-name", text: t("ui.profiles.add") }),
+    ]);
+    grid.appendChild(add);
+  }
+  const manage = document.getElementById("who-manage");
+  manage.textContent = editing ? t("ui.profiles.done") : t("ui.profiles.manage");
+  manage.onclick = () => openWho(!editing);
+  layer.hidden = false;
+  const first = grid.querySelector(".who-tile.current") || grid.querySelector(".who-tile");
+  if (first) first.focus();
+}
+
+function closeWho() {
+  document.getElementById("who").hidden = true;
+}
+
+async function switchTo(id) {
+  if (id !== PROFILES.current) {
+    await ask("profile_switch", { id });
+    await loadProfiles();
+    go("home");
+    await loadRows();
+  }
+  closeWho();
+}
+
+/** Add a profile (null) or change one: a name and a colour; a profile that
+ *  is not the main one or the current one can be removed. */
+function editProfile(profile) {
+  const grid = document.getElementById("who-grid");
+  clear(grid);
+  let color = profile ? profile.color : PROFILES.profiles.length % AVATARS;
+  const preview = el("div", { className: "who-preview" });
+  const name = el("input", {
+    attrs: { maxlength: "24", "aria-label": t("ui.profiles.name"), placeholder: t("ui.profiles.name"), value: profile ? profile.name : "" },
+  });
+  const draw = () => {
+    clear(preview);
+    preview.appendChild(avatar({ name: name.value || "?", color }, "big"));
+  };
+  name.addEventListener("input", draw);
+  const colors = el("div", { className: "who-colors", attrs: { role: "radiogroup", "aria-label": t("ui.profiles.color") } });
+  for (let c = 0; c < AVATARS; c += 1) {
+    colors.appendChild(
+      el("button", {
+        className: `swatch c${c}`,
+        attrs: { type: "button", role: "radio", "aria-label": t("ui.profiles.colorn", c + 1) },
+        onClick: () => {
+          color = c;
+          draw();
+        },
+      })
+    );
+  }
+  const save = el("button", {
+    className: "button play",
+    attrs: { type: "button" },
+    text: profile ? t("ui.profiles.save") : t("ui.profiles.create"),
+    onClick: async () => {
+      try {
+        PROFILES = profile
+          ? await ask("profile_edit", { id: profile.id, name: name.value, color })
+          : await ask("profile_add", { name: name.value, color });
+      } catch (error) {
+        return;
+      }
+      await loadProfiles();
+      openWho(Boolean(profile));
+    },
+  });
+  const actions = el("div", { className: "loading-actions" }, [
+    save,
+    el("button", { className: "button ghost", attrs: { type: "button" }, text: t("ui.profiles.cancel"), onClick: () => openWho(Boolean(profile)) }),
+  ]);
+  if (profile && profile.id !== "main" && profile.id !== PROFILES.current) {
+    actions.appendChild(
+      el("button", {
+        className: "button danger",
+        attrs: { type: "button" },
+        text: t("ui.profiles.remove"),
+        onClick: async (event) => {
+          const button = event.currentTarget;
+          if (!button.dataset.armed) {
+            button.dataset.armed = "true";
+            button.textContent = t("ui.profiles.removesure");
+            return;
+          }
+          PROFILES = await ask("profile_remove", { id: profile.id });
+          await loadProfiles();
+          openWho(true);
+        },
+      })
+    );
+  }
+  grid.appendChild(el("div", { className: "who-form" }, [preview, name, colors, actions]));
+  draw();
+  name.focus();
+}
+
+// --------------------------------------------------------------- first run
+
+/** The first time: who is watching, in which language, how much disk the
+ *  cache may use, and what an addon is -- since this program comes with
+ *  none (madde 9) and does nothing until one is added. */
+async function openWelcome() {
+  const layer = document.getElementById("welcome");
+  const body = document.getElementById("welcome-body");
+  const settings = await ask("settings");
+  let step = 0;
+  const me = PROFILES.profiles.find((p) => p.id === PROFILES.current) || PROFILES.profiles[0];
+
+  const finish = async () => {
+    await invoke("onboarding_done");
+    layer.hidden = true;
+    PROFILES.onboarded = true;
+    await loadProfiles();
+    await loadRows();
+  };
+
+  const steps = [
+    () => {
+      const name = el("input", {
+        attrs: { maxlength: "24", "aria-label": t("ui.profiles.name"), placeholder: t("ui.profiles.name"), value: me.name || "" },
+      });
+      return {
+        title: t("ui.welcome.hello"),
+        text: t("ui.welcome.hellotext"),
+        content: [name],
+        next: async () => {
+          if (name.value.trim()) await ask("profile_edit", { id: me.id, name: name.value, color: me.color });
+        },
+      };
+    },
+    () => {
+      const language = el("select", { className: "sort-select", attrs: { "aria-label": t("ui.settings.language") } });
+      for (const locale of STRINGS.locales) language.appendChild(el("option", { text: t(`ui.language.${locale}`), attrs: { value: locale } }));
+      language.value = STRINGS.locale;
+      const subs = el("select", { className: "sort-select", attrs: { "aria-label": t("ui.welcome.subs") } });
+      subs.appendChild(el("option", { text: t("ui.welcome.nosubs"), attrs: { value: "" } }));
+      for (const code of settings.languages) subs.appendChild(el("option", { text: languageName(code), attrs: { value: code } }));
+      subs.value = (settings.settings.playback.subtitleLanguages || [])[0] || (STRINGS.locale === "en" ? "" : STRINGS.locale);
+      return {
+        title: t("ui.welcome.language"),
+        text: t("ui.welcome.languagetext"),
+        content: [
+          el("label", { className: "pick" }, [el("span", { text: t("ui.settings.language") }), language]),
+          el("label", { className: "pick" }, [el("span", { text: t("ui.welcome.subs") }), subs]),
+        ],
+        next: async () => {
+          if (language.value !== STRINGS.locale) adoptStrings(await ask("language_set", { code: language.value }));
+          await ask("settings_set", { path: "playback.subtitleLanguages", value: subs.value });
+        },
+      };
+    },
+    () => ({
+      title: t("ui.welcome.disk"),
+      text: t("ui.welcome.disktext"),
+      content: [cacheBox(settings)],
+      next: async () => {},
+    }),
+    () => {
+      const address = el("input", { attrs: { type: "url", placeholder: "https://…/manifest.json", spellcheck: "false", "aria-label": t("ui.welcome.addon") } });
+      return {
+        title: t("ui.welcome.addons"),
+        text: t("ui.welcome.addonstext"),
+        content: [address],
+        next: async () => {
+          if (address.value.trim()) await ask("addon_add", { address: address.value.trim() });
+        },
+      };
+    },
+  ];
+
+  const draw = () => {
+    clear(body);
+    const current = steps[step]();
+    const dots = el("div", { className: "welcome-dots", attrs: { "aria-hidden": "true" } });
+    steps.forEach((_, at) => dots.appendChild(el("i", { className: at === step ? "on" : "" })));
+    const forward = el("button", {
+      className: "button play",
+      attrs: { type: "button" },
+      text: step === steps.length - 1 ? t("ui.welcome.start") : t("ui.welcome.next"),
+      onClick: async () => {
+        try {
+          await current.next();
+        } catch (error) {
+          return;
+        }
+        if (step === steps.length - 1) {
+          finish();
+          return;
+        }
+        step += 1;
+        draw();
+      },
+    });
+    body.appendChild(dots);
+    body.appendChild(el("h2", { className: "welcome-title", text: current.title }));
+    body.appendChild(el("p", { className: "lede", text: current.text }));
+    body.appendChild(el("div", { className: "welcome-content" }, current.content));
+    body.appendChild(
+      el("div", { className: "loading-actions" }, [
+        forward,
+        step > 0
+          ? el("button", { className: "button ghost", attrs: { type: "button" }, text: t("ui.welcome.back"), onClick: () => { step -= 1; draw(); } })
+          : null,
+        el("button", { className: "text-button quiet", attrs: { type: "button" }, text: t("ui.welcome.skip"), onClick: finish }),
+      ])
+    );
+    forward.focus();
+  };
+  layer.hidden = false;
+  draw();
+}
+
+// --------------------------------------------------------------- your genres
+
+/** Rows of the genres this profile scores highest: the first catalogue that
+ *  can be narrowed to each, narrowed to it. The addon's catalogue, labelled
+ *  for what it is -- this program judges nothing "for you". */
+async function addYourGenres() {
+  let view;
+  try {
+    view = await invoke("profile");
+  } catch (error) {
+    return;
+  }
+  ROWS = ROWS.filter((row) => !row.personal);
+  const genres = view.liked_genres.slice(0, 2).map(([genre]) => genre);
+  if (!genres.length) return;
+  const catalogs = ROWS.filter((row) => row.kind === "catalog");
+  const added = [];
+  for (const genre of genres) {
+    const base =
+      catalogs.find((row) => row.content_type === "movie" && row.genres.includes(genre) && !row.genre_required) ||
+      catalogs.find((row) => row.genres.includes(genre) && !row.genre_required);
+    if (!base) continue;
+    added.push({
+      ...base,
+      title: t("ui.row.yourgenre", genre),
+      extra: ["genre", genre],
+      items: [],
+      loaded: false,
+      exhausted: false,
+      loading: null,
+      personal: true,
+    });
+  }
+  if (!added.length) return;
+  let at = ROWS.findIndex((row) => row.kind === "catalog");
+  if (at === -1) at = ROWS.length;
+  ROWS.splice(at, 0, ...added);
+  if (!document.getElementById("view-home").hidden) renderHome();
+}
+
+/** The avatar's menu: who else can watch, and the pages that are this
+ *  profile's -- the way a streaming service keeps them out of the top bar. */
+function openAvatarMenu() {
+  const items = [
+    { icon: "star", label: t("ui.nav.profile"), run: () => go("profile") },
+    { icon: "calendar", label: t("ui.nav.calendar"), run: () => go("calendar") },
+    { icon: "download", label: t("ui.nav.downloads"), run: () => go("downloads") },
+    { icon: "people", label: t("ui.nav.community"), run: () => go("community") },
+    { icon: "addon", label: t("ui.nav.addons"), run: () => go("addons") },
+    { icon: "settings", label: t("ui.nav.settings"), run: () => go("settings") },
+    { icon: "user", label: t("ui.profiles.switchmenu"), run: () => openWho(false) },
+  ];
+  openMenu(document.getElementById("who-open"), items);
 }
 
 // ------------------------------------------------------------ new episodes
@@ -750,13 +1073,59 @@ function dragToScroll(track, onEnd) {
 
 let HERO_TOKEN = 0;
 
-async function renderHero(row) {
+/** The billboard turns through the first few titles of the first
+ *  catalogue, one every twelve seconds -- never while it is pointed at or
+ *  focused, never on another page or a hidden window, and not at all for
+ *  someone who asked for reduced motion. Each title's backdrop is asked for
+ *  once and remembered. */
+let HERO_TIMER = 0;
+const HERO_FEATURES = new Map();
+const HERO_EVERY = 12000;
+
+function scheduleHero(row, at, count) {
+  clearTimeout(HERO_TIMER);
+  if (count < 2 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  HERO_TIMER = setTimeout(() => {
+    const hero = document.getElementById("hero");
+    const resting =
+      document.getElementById("view-home").hidden ||
+      document.hidden ||
+      hero.matches(":hover") ||
+      hero.contains(document.activeElement);
+    if (resting) scheduleHero(row, at, count);
+    else renderHero(row, (at + 1) % count);
+  }, HERO_EVERY);
+}
+
+function drawHeroDots(row, at, count) {
+  let dots = document.getElementById("hero-dots");
+  if (!dots) {
+    dots = el("div", { className: "hero-dots", attrs: { id: "hero-dots", role: "group", "aria-label": t("ui.hero.more") } });
+    document.querySelector(".hero-body").appendChild(dots);
+  }
+  clear(dots);
+  dots.hidden = count < 2;
+  for (let n = 0; n < count; n += 1) {
+    dots.appendChild(
+      el("button", {
+        className: n === at ? "on" : "",
+        attrs: { type: "button", "aria-label": t("ui.hero.nth", n + 1, count), "aria-current": String(n === at) },
+        onClick: () => renderHero(row, n),
+      })
+    );
+  }
+}
+
+async function renderHero(row, at = 0) {
   const hero = document.getElementById("hero");
-  const item = row.items.find((candidate) => candidate.poster) || row.items[0];
+  const candidates = row.items.filter((candidate) => candidate.poster).slice(0, 5);
+  const item = candidates[at] || row.items[0];
   if (!item) {
     hero.hidden = true;
     return;
   }
+  drawHeroDots(row, at, candidates.length);
+  scheduleHero(row, at, candidates.length);
   const token = (HERO_TOKEN += 1);
   hero.hidden = false;
   document.getElementById("hero-title").textContent = item.name;
@@ -775,11 +1144,14 @@ async function renderHero(row) {
   // The backdrop is not in a catalogue answer, so it is asked for -- through
   // `feature`, which looks the item up without making it the one the viewer
   // is looking at.
-  let detail = null;
-  try {
-    detail = await invoke("feature", { contentType: item.content_type, id: item.id });
-  } catch (error) {
-    detail = null;
+  let detail = HERO_FEATURES.get(item.id) || null;
+  if (!detail) {
+    try {
+      detail = await invoke("feature", { contentType: item.content_type, id: item.id });
+      HERO_FEATURES.set(item.id, detail);
+    } catch (error) {
+      detail = null;
+    }
   }
   if (token !== HERO_TOKEN) return;
   if (detail) {
@@ -856,7 +1228,7 @@ async function runSearch(query, typing = false) {
 const DISCOVER = { type: null, row: null, genre: "", skip: 0, done: false, busy: false, token: 0, built: false, rows: [] };
 
 function discoverRows() {
-  return ROWS.filter((row) => row.kind === "catalog");
+  return ROWS.filter((row) => row.kind === "catalog" && !row.personal);
 }
 
 async function openDiscover() {
@@ -3120,6 +3492,7 @@ async function boot() {
     }
     if (event.key === "Escape") {
       if (!document.getElementById("menu").hidden) closeMenu(true);
+      else if (!document.getElementById("who").hidden) closeWho();
       else if (!dialog.hidden) closeDialog();
       else if (!document.getElementById("loading").hidden) document.getElementById("loading-cancel").click();
       else if (!document.getElementById("view-detail").hidden) go(LAST);
@@ -3137,8 +3510,13 @@ async function boot() {
   window.addEventListener("resize", () => closeMenu());
   document.addEventListener("scroll", () => closeMenu(), { capture: true, passive: true });
 
+  document.getElementById("who-open").addEventListener("click", openAvatarMenu);
+  await loadProfiles();
   showView("home");
   await loadRows();
+  // The first time, the setup; with several profiles, who is watching.
+  if (!PROFILES.onboarded) openWelcome();
+  else if (PROFILES.profiles.length > 1) openWho(false);
   await poll();
   // Every second while something is starting, so the loading screen moves;
   // every few seconds otherwise, which is only there to notice a playback

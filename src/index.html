@@ -38,14 +38,7 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
         <button class="link" type="button" data-go="movie" data-say="ui.nav.movies"></button>
         <button class="link" type="button" data-go="new" data-say="ui.nav.new"></button>
         <button class="link" type="button" data-go="discover" data-say="ui.nav.discover"></button>
-        <button class="link" type="button" data-go="calendar">
-          <span data-say="ui.nav.calendar"></span><span id="calendar-dot" class="dot" hidden></span>
-        </button>
         <button class="link" type="button" data-go="library" data-say="ui.nav.library"></button>
-        <button class="link" type="button" data-go="downloads" data-say="ui.nav.downloads"></button>
-        <button class="link" type="button" data-go="profile" data-say="ui.nav.profile"></button>
-        <button class="link" type="button" data-go="community" data-say="ui.nav.community"></button>
-        <button class="link" type="button" data-go="addons" data-say="ui.nav.addons"></button>
       </nav>
       <div class="nav-tools">
         <form id="search-form" class="searchbox" role="search">
@@ -53,7 +46,10 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
           <input id="search-input" type="search" autocomplete="off" spellcheck="false" />
         </form>
         <button id="link-open" class="icon-button" type="button" data-icon="link" data-label="ui.action.openlink"></button>
-        <button class="icon-button" type="button" data-go="settings" data-icon="settings" data-label="ui.nav.settings"></button>
+        <span class="who-wrap">
+          <button id="who-open" class="who-open" type="button" aria-haspopup="menu"></button>
+          <span id="calendar-dot" class="dot" hidden></span>
+        </span>
       </div>
     </header>
 
@@ -175,6 +171,23 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
     <!-- What a viewer sees between pressing play and the first frame: a torrent
          can take a minute to find its swarm, and a catalogue that just sits
          there looks like nothing happened. -->
+    <!-- Who is watching: every profile on this computer. -->
+    <div id="who" class="who" hidden>
+      <div class="who-inner">
+        <h2 id="who-title" class="who-title"></h2>
+        <div id="who-grid" class="who-grid"></div>
+        <button id="who-manage" class="button ghost" type="button"></button>
+      </div>
+    </div>
+
+    <!-- The first time the program opens. -->
+    <div id="welcome" class="welcome" hidden>
+      <div class="welcome-inner">
+        <span class="mark big" aria-hidden="true"><span></span><span></span><span></span></span>
+        <div id="welcome-body"></div>
+      </div>
+    </div>
+
     <div id="loading" class="loading" hidden>
       <div class="loading-art" id="loading-art"></div>
       <button id="loading-back" class="icon-button loading-back" type="button" data-icon="arrowLeft" data-label="ui.action.back"></button>

@@ -898,6 +898,86 @@ pub async fn download_remove(state: State<'_, Shared>, hex: String) -> Out<()> {
     .map_err(|e| e.to_string())?
 }
 
+/// Who can watch on this computer, who is, and whether the first-run setup
+/// was done.
+#[tauri::command]
+pub async fn profiles(state: State<'_, Shared>) -> Out<crate::profiles::Profiles> {
+    with_session(&state, |session| Ok(session.profiles.clone())).await
+}
+
+#[tauri::command]
+pub async fn profile_add(
+    state: State<'_, Shared>,
+    name: String,
+    color: u8,
+) -> Out<crate::profiles::Profiles> {
+    with_session(&state, move |session| {
+        session
+            .profiles
+            .add(&name, color)
+            .map_err(|key| session.text(key))?;
+        Ok(session.profiles.clone())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn profile_switch(
+    state: State<'_, Shared>,
+    id: String,
+) -> Out<crate::profiles::Profiles> {
+    with_session(&state, move |session| {
+        session
+            .switch_profile(&id)
+            .map_err(|key| session.text(key))?;
+        Ok(session.profiles.clone())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn profile_edit(
+    state: State<'_, Shared>,
+    id: String,
+    name: String,
+    color: u8,
+) -> Out<crate::profiles::Profiles> {
+    with_session(&state, move |session| {
+        session
+            .profiles
+            .rename(&id, &name, color)
+            .map_err(|key| session.text(key))?;
+        Ok(session.profiles.clone())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn profile_remove(
+    state: State<'_, Shared>,
+    id: String,
+) -> Out<crate::profiles::Profiles> {
+    with_session(&state, move |session| {
+        session
+            .profiles
+            .remove(&id)
+            .map_err(|key| session.text(key))?;
+        Ok(session.profiles.clone())
+    })
+    .await
+}
+
+/// The first-run setup is done, or was skipped: it is not shown again.
+#[tauri::command]
+pub async fn onboarding_done(state: State<'_, Shared>) -> Out<()> {
+    with_session(&state, |session| {
+        session.profiles.onboarded = true;
+        session.profiles.save();
+        Ok(())
+    })
+    .await
+}
+
 /// The viewer's own score of a title, if they gave one.
 #[tauri::command]
 pub async fn rating_get(

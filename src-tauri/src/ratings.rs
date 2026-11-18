@@ -19,7 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::state::{beside_exe, Session};
+use crate::state::Session;
 
 const FILE: &str = "eon-ratings.json";
 /// Long enough for a real review, short enough that a paste of a whole
@@ -52,16 +52,17 @@ pub struct Ratings {
 }
 
 impl Ratings {
-    pub fn load() -> Self {
-        std::fs::read_to_string(beside_exe(FILE))
+    /// A profile's scores.
+    pub fn load(profile: &str) -> Self {
+        std::fs::read_to_string(crate::profiles::file(profile, FILE))
             .ok()
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default()
     }
 
-    pub fn save(&self) {
+    pub fn save(&self, profile: &str) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(beside_exe(FILE), json);
+            let _ = std::fs::write(crate::profiles::file(profile, FILE), json);
         }
     }
 
@@ -165,7 +166,7 @@ pub fn set(
 ) -> Result<Option<Rating>, String> {
     let Some(score) = score else {
         session.ratings.remove(content_type, id);
-        session.ratings.save();
+        session.ratings.save(&session.profiles.current);
         return Ok(None);
     };
     if !(1..=10).contains(&score) {
@@ -193,7 +194,7 @@ pub fn set(
         ..known
     };
     session.ratings.put(rating.clone());
-    session.ratings.save();
+    session.ratings.save(&session.profiles.current);
     Ok(Some(rating))
 }
 
