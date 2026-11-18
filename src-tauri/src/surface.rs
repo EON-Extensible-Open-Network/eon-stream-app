@@ -79,15 +79,27 @@ fn profile() -> std::path::PathBuf {
 ///
 /// Whatever Tauri reports when the window cannot be built.
 pub fn main_window(app: &AppHandle) -> tauri::Result<()> {
+    // How the viewer chose the window to open (first-run setup, Settings).
+    let mode = crate::profiles::Profiles::load().window;
+    let (width, height) = match mode.as_str() {
+        "small" => (960.0, 620.0),
+        "large" => (1600.0, 1000.0),
+        _ => (1280.0, 820.0),
+    };
     #[allow(unused_mut)]
     let mut builder =
         tauri::WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
             .title("EON Stream")
-            .inner_size(1280.0, 820.0)
+            .inner_size(width, height)
+            .maximized(mode == "maximized")
+            .fullscreen(mode == "fullscreen")
             .min_inner_size(880.0, 560.0)
             .resizable(true)
             .center()
             .theme(Some(tauri::Theme::Dark))
+            // The interface's own ink colour, from the first frame: no white
+            // flash while the page loads, or behind the player.
+            .background_color(tauri::webview::Color(7, 9, 14, 255))
             .data_directory(profile());
     // A debug build can be driven over the DevTools protocol, which is how
     // the window is tested without anyone clicking it -- and without SendKeys.
@@ -99,7 +111,51 @@ pub fn main_window(app: &AppHandle) -> tauri::Result<()> {
             "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection {extra}"
         ));
     }
-    builder.build().map(|_| ())
+    let window = builder.build()?;
+    // A video file dropped on the window plays, as in a desktop player.
+    let handle = app.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+            if let Some(path) = paths.iter().find(|p| crate::commands::is_video(p)).cloned() {
+                let shared = std::sync::Arc::clone(handle.state::<crate::Shared>().inner());
+                tauri::async_runtime::spawn_blocking(move || {
+                    let _ = crate::commands::play_local(&shared, path);
+                });
+            }
+        }
+    });
+    Ok(())
+}
+
+/// Put the window in a mode now, as the setting will on the next start.
+///
+/// # Errors
+///
+/// When there is no window.
+pub fn apply_window_mode(mode: &str) -> Result<(), String> {
+    let app = APP.get().ok_or_else(|| "there is no window".to_owned())?;
+    let window = app
+        .get_window(MAIN)
+        .ok_or_else(|| "there is no window".to_owned())?;
+    let fail = |e: tauri::Error| e.to_string();
+    window.set_fullscreen(mode == "fullscreen").map_err(fail)?;
+    match mode {
+        "fullscreen" => {}
+        "maximized" => window.maximize().map_err(fail)?,
+        other => {
+            window.unmaximize().map_err(fail)?;
+            let (width, height) = match other {
+                "small" => (960.0, 620.0),
+                "large" => (1600.0, 1000.0),
+                _ => (1280.0, 820.0),
+            };
+            window
+                .set_size(tauri::LogicalSize::new(width, height))
+                .map_err(fail)?;
+            window.center().map_err(fail)?;
+        }
+    }
+    Ok(())
 }
 
 /// Remember the application. Called once, from `setup`.
@@ -203,6 +259,11 @@ pub fn open_controls() {
     let mut builder = WebviewBuilder::new(CONTROLS, WebviewUrl::App("player.html".into()))
         .data_directory(profile())
         .transparent(true)
+        // Transparent from the first paint. WebView2's default background is
+        // white, and until the page had drawn, that white -- the size the
+        // layer was made at -- sat over mpv's black picture: the white
+        // rectangle seen while a film first loaded.
+        .background_color(tauri::webview::Color(0, 0, 0, 0))
         .auto_resize()
         .focused(true);
     #[cfg(debug_assertions)]

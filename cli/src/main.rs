@@ -2233,6 +2233,9 @@ fn continue_watching(app: &mut App) {
             description: None,
             release_info: None,
             imdb_rating: None,
+            genres: Vec::new(),
+            country: None,
+            language: None,
         })
         .collect();
     for (n, entry) in entries.iter().enumerate() {

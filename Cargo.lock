@@ -1227,7 +1227,7 @@ dependencies = [
 [[package]]
 name = "eon-stream-core"
 version = "0.0.0"
-source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-core?rev=069092b66e6f4c2a3ac5c1c4594926c61f0f5071#069092b66e6f4c2a3ac5c1c4594926c61f0f5071"
+source = "git+https://github.com/EON-Extensible-Open-Network/eon-stream-core?rev=c5045e628012c3759a0363f17db2b663635490bf#c5045e628012c3759a0363f17db2b663635490bf"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",

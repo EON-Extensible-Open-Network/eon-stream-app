@@ -28,30 +28,48 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
   </head>
   <body>
     <header class="nav" id="nav">
-      <button class="brand" type="button" data-go="home" data-label="ui.nav.home">
-        <span class="mark" aria-hidden="true"><span></span><span></span><span></span></span>
-        <span class="wordmark" aria-hidden="true">EON<b>Stream</b></span>
-      </button>
-      <nav class="links" data-label="ui.nav.menu">
-        <button class="link" type="button" data-go="home" data-say="ui.nav.home"></button>
-        <button class="link" type="button" data-go="series" data-say="ui.nav.series"></button>
-        <button class="link" type="button" data-go="movie" data-say="ui.nav.movies"></button>
-        <button class="link" type="button" data-go="new" data-say="ui.nav.new"></button>
-        <button class="link" type="button" data-go="discover" data-say="ui.nav.discover"></button>
-        <button class="link" type="button" data-go="library" data-say="ui.nav.library"></button>
-      </nav>
+      <div class="nav-start">
+        <button id="side-toggle" class="icon-button" type="button" data-icon="menu" data-label="ui.nav.menu" aria-controls="side" aria-expanded="true"></button>
+        <button class="brand" type="button" data-go="home" data-label="ui.nav.home">
+          <span class="mark" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="wordmark" aria-hidden="true">EON<b>Stream</b></span>
+        </button>
+      </div>
+      <form id="search-form" class="searchbox" role="search">
+        <input id="search-input" type="search" autocomplete="off" spellcheck="false" />
+        <button type="submit" class="search-go" data-icon="search" data-label="ui.action.search"></button>
+      </form>
       <div class="nav-tools">
-        <form id="search-form" class="searchbox" role="search">
-          <button type="submit" class="icon-button" data-icon="search" data-label="ui.action.search"></button>
-          <input id="search-input" type="search" autocomplete="off" spellcheck="false" />
-        </form>
         <button id="link-open" class="icon-button" type="button" data-icon="link" data-label="ui.action.openlink"></button>
         <span class="who-wrap">
           <button id="who-open" class="who-open" type="button" aria-haspopup="menu"></button>
-          <span id="calendar-dot" class="dot" hidden></span>
         </span>
       </div>
     </header>
+
+    <aside id="side" class="side" data-label="ui.nav.menu">
+      <nav class="side-group" data-label="ui.nav.menu">
+        <button class="link" type="button" data-go="home" data-icon="home" data-say="ui.nav.home"></button>
+        <button class="link" type="button" data-go="series" data-icon="tv" data-say="ui.nav.series"></button>
+        <button class="link" type="button" data-go="movie" data-icon="film" data-say="ui.nav.movies"></button>
+        <button class="link" type="button" data-go="new" data-icon="flame" data-say="ui.nav.new"></button>
+        <button class="link" type="button" data-go="discover" data-icon="compass" data-say="ui.nav.discover"></button>
+        <button class="link" type="button" data-go="library" data-icon="bookmark" data-say="ui.nav.library"></button>
+      </nav>
+      <hr class="side-rule" />
+      <nav class="side-group side-more" data-label="ui.nav.you">
+        <h2 class="side-head" data-say="ui.nav.you"></h2>
+        <button class="link" type="button" data-go="profile" data-icon="star" data-say="ui.nav.profile"></button>
+        <button class="link" type="button" data-go="calendar" data-icon="calendar" data-say="ui.nav.calendar"><span id="calendar-dot" class="dot" hidden></span></button>
+        <button class="link" type="button" data-go="downloads" data-icon="download" data-say="ui.nav.downloads"></button>
+        <button class="link" type="button" data-go="community" data-icon="people" data-say="ui.nav.community"><span id="community-dot" class="dot" hidden></span></button>
+      </nav>
+      <hr class="side-rule" />
+      <nav class="side-group side-more" data-label="ui.nav.app">
+        <button class="link" type="button" data-go="addons" data-icon="addon" data-say="ui.nav.addons"></button>
+        <button class="link" type="button" data-go="settings" data-icon="settings" data-say="ui.nav.settings"></button>
+      </nav>
+    </aside>
 
     <main id="main">
       <section class="view" id="view-home">
@@ -81,6 +99,7 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
         <h2 id="search-heading" class="page-title"></h2>
         <p id="search-correction" class="correction" hidden></p>
         <div id="search-grid" class="grid"></div>
+        <nav id="search-pages" class="pager" hidden></nav>
       </section>
 
       <section class="view" id="view-new" hidden>
@@ -222,5 +241,6 @@ over mpv's picture while something plays; see src-tauri/src/surface.rs.
 
     <script src="icons.js"></script>
     <script src="app.js"></script>
+    <script src="community.js"></script>
   </body>
 </html>

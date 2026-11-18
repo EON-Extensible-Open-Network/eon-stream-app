@@ -238,6 +238,9 @@ mod tests {
             description: None,
             release_info: Some("2015".to_owned()),
             imdb_rating: Some("8.9".to_owned()),
+            genres: Vec::new(),
+            country: None,
+            language: None,
         }
     }
 

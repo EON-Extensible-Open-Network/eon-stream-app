@@ -254,6 +254,33 @@ function solidNav() {
   document.getElementById("nav").classList.toggle("solid", window.scrollY > 40);
 }
 
+/** The side menu, open or folded to icons. The choice is remembered on this
+ *  computer; a narrow window starts folded. */
+function setSide(open, remember) {
+  document.body.classList.toggle("side-mini", !open);
+  document.getElementById("side-toggle").setAttribute("aria-expanded", String(open));
+  if (remember) {
+    try {
+      localStorage.setItem("eon-side", open ? "open" : "mini");
+    } catch (error) {
+      // A private profile keeps nothing; the menu still works.
+    }
+  }
+}
+
+function initSide() {
+  let kept = null;
+  try {
+    kept = localStorage.getItem("eon-side");
+  } catch (error) {
+    kept = null;
+  }
+  setSide(kept ? kept === "open" : window.innerWidth >= 1200, false);
+  document.getElementById("side-toggle").addEventListener("click", () => {
+    setSide(document.body.classList.contains("side-mini"), true);
+  });
+}
+
 /** A poster, or the item's initials when there is no usable image.
  *
  * An addon's poster host can be down, slow, or simply wrong, and a broken
@@ -384,10 +411,49 @@ function continueActions(row) {
 
 // --------------------------------------------------------------------- home
 
+/** Whether the profile in use is a child's, and what a child's sees. */
+let KIDS = false;
+const KIDS_GENRES = ["animation", "family", "kids", "children"];
+
 async function loadRows() {
-  const rows = await ask("rows");
+  let rows = await ask("rows");
   // Discover indexes into this list: a new list is a new Discover.
   DISCOVER.built = false;
+  // Two addons can offer the same catalogue under the same name -- two
+  // "Popular" film rows that look like one repeated. The first, in the
+  // viewer's addon order, is kept.
+  const seen = new Set();
+  rows = rows.filter((row) => {
+    if (row.kind !== "catalog") return true;
+    const key = `${row.content_type}|${row.title.trim().toLocaleLowerCase()}|${row.extra ? row.extra.join("=") : ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  // "Popular" for films and "Popular" for series read as one row twice:
+  // a name two catalogue rows share carries its type.
+  const names = new Map();
+  for (const row of rows) {
+    if (row.kind === "catalog") names.set(row.title, (names.get(row.title) || 0) + 1);
+  }
+  rows = rows.map((row) =>
+    row.kind === "catalog" && names.get(row.title) > 1
+      ? { ...row, title: t("ui.row.typed", row.title, typeName(row.content_type)) }
+      : row
+  );
+  // A child's profile: each catalogue row asks for its family or animation
+  // titles, and a catalogue that cannot be asked that way is left out.
+  const me = PROFILES.profiles.find((p) => p.id === PROFILES.current);
+  KIDS = Boolean(me && me.kids);
+  if (KIDS) {
+    rows = rows
+      .map((row) => {
+        if (row.kind !== "catalog") return row;
+        const genre = row.genres.find((g) => KIDS_GENRES.includes(g.toLowerCase()));
+        return genre ? { ...row, extra: ["genre", genre], title: `${row.title} · ${genre}` } : null;
+      })
+      .filter(Boolean);
+  }
   ROWS = rows.map((row) => ({
     ...row,
     // A catalogue row fetches itself; the others arrive filled.
@@ -398,6 +464,21 @@ async function loadRows() {
   renderHome();
   addNewEpisodes();
   addYourGenres();
+  addForYou();
+  // Continue-watching cards from before their artwork was remembered get it
+  // now, once; the row is drawn again if anything came back.
+  invoke("fill_art")
+    .then(async (filled) => {
+      if (!filled) return;
+      const fresh = await invoke("rows");
+      const updated = fresh.find((row) => row.kind === "continue");
+      const row = ROWS.find((other) => other.kind === "continue");
+      if (updated && row) {
+        row.items = updated.items;
+        if (!document.getElementById("view-home").hidden) renderHome();
+      }
+    })
+    .catch(() => {});
 }
 
 // ------------------------------------------------------------------ profiles
@@ -444,7 +525,13 @@ function openWho(editing = false) {
         attrs: { type: "button" },
         onClick: () => (editing ? editProfile(profile) : switchTo(profile.id)),
       },
-      [avatar(profile, "big"), el("span", { className: "who-name", text: profileName(profile) })]
+      [
+        avatar(profile, "big"),
+        el("span", { className: "who-name", text: profileName(profile) }),
+        profile.kids || profile.locked
+          ? el("span", { className: "who-badges", text: [profile.kids ? t("ui.profiles.kids") : null, profile.locked ? t("ui.profiles.lockedbadge") : null].filter(Boolean).join(" · ") })
+          : null,
+      ]
     );
     if (editing) tile.appendChild(el("span", { className: "who-edit", text: t("ui.profiles.edit") }));
     grid.appendChild(tile);
@@ -464,13 +551,40 @@ function openWho(editing = false) {
   if (first) first.focus();
 }
 
+/** At start, a locked profile that was in use last is not opened without
+ *  its PIN: "Who is watching?" stays until someone picks a profile. */
+let PIN_GATE = false;
+
 function closeWho() {
+  if (PIN_GATE) return;
   document.getElementById("who").hidden = true;
 }
 
 async function switchTo(id) {
+  if (id === PROFILES.current && PIN_GATE) {
+    const me = PROFILES.profiles.find((p) => p.id === id);
+    const pin = await promptText(t("ui.profiles.pinask", profileName(me)), null, { min: 4, max: 4, multiline: false, secret: true });
+    if (pin === null) return;
+    try {
+      await ask("profile_switch", { id, pin });
+    } catch (error) {
+      return;
+    }
+    PIN_GATE = false;
+  }
   if (id !== PROFILES.current) {
-    await ask("profile_switch", { id });
+    const target = PROFILES.profiles.find((p) => p.id === id);
+    let pin = null;
+    if (target && target.locked) {
+      pin = await promptText(t("ui.profiles.pinask", profileName(target)), null, { min: 4, max: 4, multiline: false, secret: true });
+      if (pin === null) return;
+    }
+    try {
+      await ask("profile_switch", { id, pin });
+    } catch (error) {
+      return;
+    }
+    PIN_GATE = false;
     await loadProfiles();
     go("home");
     await loadRows();
@@ -546,12 +660,77 @@ function editProfile(profile) {
       })
     );
   }
-  grid.appendChild(el("div", { className: "who-form" }, [preview, name, colors, actions]));
+  // A child's profile, and a PIN -- for a profile that already exists.
+  const extras = el("div", { className: "who-extras" });
+  if (profile) {
+    const kids = el("input", { attrs: { type: "checkbox" } });
+    kids.checked = Boolean(profile.kids);
+    kids.addEventListener("change", async () => {
+      try {
+        PROFILES = await ask("profile_kids", { id: profile.id, kids: kids.checked });
+        profile.kids = kids.checked;
+      } catch (error) {
+        kids.checked = !kids.checked;
+      }
+    });
+    extras.appendChild(el("label", { className: "check" }, [kids, el("span", { text: t("ui.profiles.kidslabel") })]));
+    extras.appendChild(el("p", { className: "hint", text: t("ui.profiles.kidsnote") }));
+    extras.appendChild(
+      el("button", {
+        className: "button ghost",
+        attrs: { type: "button" },
+        text: profile.locked ? t("ui.profiles.pinchange") : t("ui.profiles.pinset"),
+        onClick: async () => {
+          let old = null;
+          if (profile.locked) {
+            old = await promptText(t("ui.profiles.pinold"), null, { min: 4, max: 4, multiline: false, secret: true });
+            if (old === null) return;
+          }
+          const pin = await promptText(t("ui.profiles.pinnew"), t("ui.profiles.pinhint"), { min: 0, max: 4, multiline: false, secret: true });
+          if (pin === null) return;
+          try {
+            PROFILES = await ask("profile_pin", { id: profile.id, pin: pin || null, old });
+            toast(pin ? t("ui.profiles.pinsaved") : t("ui.profiles.pinremoved"));
+            openWho(true);
+          } catch (error) {
+            // `ask` said it.
+          }
+        },
+      })
+    );
+  }
+  grid.appendChild(el("div", { className: "who-form" }, [preview, name, colors, extras, actions]));
   draw();
   name.focus();
 }
 
 // --------------------------------------------------------------- first run
+
+/** How the window opens: a row of choices; in Settings each press applies
+ *  at once, in the first-run setup on "Next". */
+function windowPicker(current, live) {
+  const box = el("div", { className: "chips", attrs: { role: "radiogroup", "aria-label": t("ui.window.title") } });
+  box.dataset.value = current;
+  const draw = () => {
+    clear(box);
+    for (const mode of ["maximized", "fullscreen", "large", "medium", "small"]) {
+      box.appendChild(
+        el("button", {
+          className: "chip",
+          text: t(`ui.window.${mode}`),
+          attrs: { type: "button", role: "radio", "aria-checked": String(box.dataset.value === mode), "aria-pressed": String(box.dataset.value === mode) },
+          onClick: async () => {
+            box.dataset.value = mode;
+            draw();
+            if (live) await ask("window_mode_set", { mode });
+          },
+        })
+      );
+    }
+  };
+  draw();
+  return box;
+}
 
 /** The first time: who is watching, in which language, how much disk the
  *  cache may use, and what an addon is -- since this program comes with
@@ -603,6 +782,17 @@ async function openWelcome() {
         next: async () => {
           if (language.value !== STRINGS.locale) adoptStrings(await ask("language_set", { code: language.value }));
           await ask("settings_set", { path: "playback.subtitleLanguages", value: subs.value });
+        },
+      };
+    },
+    () => {
+      const mode = windowPicker(PROFILES.window || "maximized", false);
+      return {
+        title: t("ui.welcome.window"),
+        text: t("ui.welcome.windowtext"),
+        content: [mode],
+        next: async () => {
+          await ask("window_mode_set", { mode: mode.dataset.value });
         },
       };
     },
@@ -680,6 +870,7 @@ async function addYourGenres() {
     return;
   }
   ROWS = ROWS.filter((row) => !row.personal);
+  if (KIDS) return;
   const genres = view.liked_genres.slice(0, 2).map(([genre]) => genre);
   if (!genres.length) return;
   const catalogs = ROWS.filter((row) => row.kind === "catalog");
@@ -698,6 +889,7 @@ async function addYourGenres() {
       exhausted: false,
       loading: null,
       personal: true,
+      genreRow: false,
     });
   }
   if (!added.length) return;
@@ -711,13 +903,9 @@ async function addYourGenres() {
  *  profile's -- the way a streaming service keeps them out of the top bar. */
 function openAvatarMenu() {
   const items = [
-    { icon: "star", label: t("ui.nav.profile"), run: () => go("profile") },
-    { icon: "calendar", label: t("ui.nav.calendar"), run: () => go("calendar") },
-    { icon: "download", label: t("ui.nav.downloads"), run: () => go("downloads") },
-    { icon: "people", label: t("ui.nav.community"), run: () => go("community") },
-    { icon: "addon", label: t("ui.nav.addons"), run: () => go("addons") },
-    { icon: "settings", label: t("ui.nav.settings"), run: () => go("settings") },
     { icon: "user", label: t("ui.profiles.switchmenu"), run: () => openWho(false) },
+    { icon: "star", label: t("ui.nav.profile"), run: () => go("profile") },
+    { icon: "settings", label: t("ui.nav.settings"), run: () => go("settings") },
   ];
   openMenu(document.getElementById("who-open"), items);
 }
@@ -835,12 +1023,142 @@ async function openCalendar() {
 }
 
 function rowsForFilter() {
-  if (FILTER === "home") return ROWS;
-  return ROWS.filter((row) =>
-    row.kind === "catalog"
+  // A genre already shown as "Because you score ... high" is not shown again.
+  const personal = new Set(ROWS.filter((row) => row.personal).map((row) => `${row.content_type}|${row.extra[1]}`));
+  const genreType = FILTER === "home" ? "movie" : FILTER;
+  return ROWS.filter((row) => {
+    if (row.genreRow) return row.content_type === genreType && !personal.has(`${row.content_type}|${row.extra[1]}`);
+    if (FILTER === "home") return true;
+    return row.kind === "catalog"
       ? row.content_type === FILTER
-      : row.items.some((item) => item.content_type === FILTER)
-  );
+      : row.items.some((item) => item.content_type === FILTER);
+  });
+}
+
+// --------------------------------------------------------- recommended for you
+
+/** "Recommended for you": ranked on this computer from what this profile
+ *  watched, scored and saved (recommend.rs). Its first page is a row near
+ *  the top; the rest is the feed at the end of the home screen, which goes
+ *  on as long as the addons' catalogues do. */
+const FEED = { started: false, page: 0, items: [], more: false, busy: false, token: 0 };
+
+async function addForYou() {
+  const token = (FEED.token += 1);
+  let first;
+  try {
+    first = await invoke("recommend", { page: 0, fresh: true });
+  } catch (error) {
+    return;
+  }
+  if (token !== FEED.token) return;
+  ROWS = ROWS.filter((row) => row.kind !== "foryou" && row.kind !== "language" && !row.genreRow);
+  const inRow = first.items.slice(0, 20);
+  if (inRow.length) {
+    let at = ROWS.findIndex((row) => row.kind === "catalog");
+    if (at === -1) at = ROWS.length;
+    ROWS.splice(at, 0, { kind: "foryou", title: t("ui.row.foryou"), items: inRow, loaded: true, exhausted: true, loading: null });
+  }
+  if (first.language && first.in_language.length >= 4) {
+    ROWS.push({
+      kind: "language",
+      title: t("ui.row.inlanguage", languageName(first.language)),
+      items: first.in_language,
+      loaded: true,
+      exhausted: true,
+      loading: null,
+    });
+  }
+  ROWS.push(...genreRows(first.genres));
+  FEED.started = true;
+  FEED.page = 0;
+  FEED.items = first.items.slice(inRow.length);
+  FEED.more = first.more;
+  if (!document.getElementById("view-home").hidden) renderHome();
+}
+
+/** A row per genre the catalogues offer, the genres this profile likes
+ *  first. One row per genre and type; the home screen shows the films',
+ *  the Series and Movies pages their own. */
+function genreRows(liked) {
+  if (KIDS) return [];
+  const catalogs = ROWS.filter((row) => row.kind === "catalog" && !row.personal && !row.genreRow);
+  const rows = [];
+  for (const type of ["movie", "series"]) {
+    const offered = [];
+    for (const row of catalogs) {
+      if (row.content_type !== type) continue;
+      for (const genre of row.genres) if (!offered.includes(genre)) offered.push(genre);
+    }
+    const order = [
+      ...liked.map((g) => offered.find((o) => o.toLowerCase() === g)).filter(Boolean),
+      ...offered,
+    ].filter((genre, at, all) => all.indexOf(genre) === at);
+    for (const genre of order) {
+      const base = catalogs.find((row) => row.content_type === type && row.genres.includes(genre));
+      if (!base) continue;
+      rows.push({
+        ...base,
+        title: genre,
+        extra: ["genre", genre],
+        items: [],
+        loaded: false,
+        exhausted: false,
+        loading: null,
+        genreRow: true,
+      });
+    }
+  }
+  return rows;
+}
+
+function languageName(code) {
+  try {
+    return new Intl.DisplayNames([MESSAGES.__locale || "en"], { type: "language" }).of(code) || code;
+  } catch (error) {
+    return code;
+  }
+}
+
+/** The feed after the last row: a grid that asks for its next page when its
+ *  end comes near, for as long as there is one. */
+function feedSection() {
+  const shows = (item) => FILTER === "home" || item.content_type === FILTER;
+  const grid = el("div", { className: "grid feed-grid" });
+  for (const item of FEED.items) if (shows(item)) grid.appendChild(card(item));
+  const end = el("div", { className: "spinner feed-end", text: t("ui.loading") });
+  end.hidden = !FEED.more;
+  const section = el("section", { className: "feed", attrs: { "aria-label": t("ui.row.morefor") } }, [
+    el("div", { className: "row-head" }, [el("h3", { text: t("ui.row.morefor") })]),
+    grid,
+    end,
+  ]);
+  const pump = () =>
+    whenNear(end, async () => {
+      if (!FEED.more || FEED.busy || !grid.isConnected) return;
+      FEED.busy = true;
+      const token = FEED.token;
+      try {
+        const next = await invoke("recommend", { page: FEED.page + 1, fresh: false });
+        if (token !== FEED.token) return;
+        FEED.page = next.page;
+        FEED.more = next.more;
+        const known = new Set(FEED.items.map((item) => `${item.content_type}:${item.id}`));
+        const fresh = next.items.filter((item) => !known.has(`${item.content_type}:${item.id}`));
+        FEED.items.push(...fresh);
+        const cards = document.createDocumentFragment();
+        for (const item of fresh) if (shows(item)) cards.appendChild(card(item));
+        grid.appendChild(cards);
+      } catch (error) {
+        FEED.more = false;
+      } finally {
+        FEED.busy = false;
+      }
+      end.hidden = !FEED.more;
+      if (FEED.more && grid.isConnected) pump();
+    });
+  if (FEED.more) pump();
+  return section;
 }
 
 async function renderHome() {
@@ -853,9 +1171,10 @@ async function renderHome() {
     return;
   }
   for (const row of rows) container.appendChild(slider(row));
+  if (FEED.started) container.appendChild(feedSection());
   // The billboard is chosen once the first catalogue has answered, from what
-  // it offered -- never from a list of our own, which would be a
-  // recommendation, and this program does not make those.
+  // it offered: the same for every profile, so it is a place to find what is
+  // new rather than more of the same.
   const first = rows.find((row) => row.kind === "catalog") || rows[0];
   if (first) {
     await ensureRow(first);
@@ -1196,9 +1515,10 @@ async function runSearch(query, typing = false) {
   document.getElementById("search-correction").hidden = true;
   grid.appendChild(el("div", { className: "spinner", text: t("ui.loading") }));
 
+  SEARCH_QUERY = query;
   let result;
   try {
-    result = typing ? await invoke("search", { query }) : await ask("search", { query });
+    result = typing ? await invoke("search_page", { query, page: 0 }) : await ask("search_page", { query, page: 0 });
   } catch (error) {
     if (token === SEARCH_TOKEN) clear(grid);
     return;
@@ -1218,6 +1538,60 @@ async function runSearch(query, typing = false) {
   }
   for (const item of result.items) grid.appendChild(card(item));
   if (result.failures.length) toast(result.failures.join("\n"));
+  drawPager(result);
+}
+
+let SEARCH_QUERY = "";
+
+/** Page numbers under the results, as a search engine shows them. A page is
+ *  read from the addons when it is opened, not before. */
+function drawPager(result) {
+  const pager = document.getElementById("search-pages");
+  clear(pager);
+  pager.hidden = result.known_pages < 2 && !result.more;
+  if (pager.hidden) return;
+  const go = (page) => openSearchPage(page);
+  if (result.page > 0) {
+    pager.appendChild(el("button", { className: "page-step", text: t("ui.search.previous"), attrs: { type: "button" }, onClick: () => go(result.page - 1) }));
+  }
+  const last = result.known_pages - 1;
+  const from = Math.max(0, result.page - 4);
+  const to = Math.min(last, from + 9);
+  for (let n = from; n <= to; n += 1) {
+    pager.appendChild(
+      el("button", {
+        className: `page-number${n === result.page ? " on" : ""}`,
+        text: String(n + 1),
+        attrs: { type: "button", "aria-current": n === result.page ? "page" : "false", "aria-label": t("ui.search.page", n + 1) },
+        onClick: () => go(n),
+      })
+    );
+  }
+  if (result.more) {
+    pager.appendChild(el("button", { className: "page-step", text: t("ui.search.next"), attrs: { type: "button" }, onClick: () => go(result.page + 1) }));
+  }
+}
+
+async function openSearchPage(page) {
+  const grid = document.getElementById("search-grid");
+  const token = (SEARCH_TOKEN += 1);
+  clear(grid);
+  grid.appendChild(el("div", { className: "spinner", text: t("ui.loading") }));
+  window.scrollTo({ top: 0 });
+  let result;
+  try {
+    result = await ask("search_page", { query: SEARCH_QUERY, page });
+  } catch (error) {
+    clear(grid);
+    return;
+  }
+  if (token !== SEARCH_TOKEN) return;
+  clear(grid);
+  if (result.items.length === 0) grid.appendChild(el("div", { className: "spinner", text: t("ui.search.none") }));
+  const cards = document.createDocumentFragment();
+  for (const item of result.items) cards.appendChild(card(item));
+  grid.appendChild(cards);
+  drawPager(result);
 }
 
 // ------------------------------------------------------------------ discover
@@ -1228,7 +1602,7 @@ async function runSearch(query, typing = false) {
 const DISCOVER = { type: null, row: null, genre: "", skip: 0, done: false, busy: false, token: 0, built: false, rows: [] };
 
 function discoverRows() {
-  return ROWS.filter((row) => row.kind === "catalog" && !row.personal);
+  return ROWS.filter((row) => row.kind === "catalog" && !row.personal && !row.genreRow);
 }
 
 async function openDiscover() {
@@ -1571,7 +1945,9 @@ async function openDetail(contentType, id) {
             className: "name-link",
             text: name,
             attrs: { type: "button", title: t("ui.detail.searchname", name) },
-            onClick: () => runSearch(name),
+            // With a community server, a name is a page of its own;
+            // without one, it searches every addon for it.
+            onClick: () => (COMMUNITY.server ? openPerson(name) : runSearch(name)),
           })
         );
       });
@@ -1683,464 +2059,6 @@ function ratingBox(detail) {
     })
     .catch(() => draw());
   return box;
-}
-
-// ----------------------------------------------------------------- community
-
-/** One request to the community server, through the host: the address and
- *  the session token never reach this page. Answers the body; throws the
- *  server's sentence for anything but 2xx. */
-async function cq(method, path, body = null) {
-  const answer = await invoke("community_request", { method, path, body });
-  if (answer.status >= 200 && answer.status < 300) return answer.body;
-  const message = answer.body && answer.body.message ? answer.body.message : t("ui.community.failed", answer.status);
-  throw message;
-}
-
-let COMMUNITY = { server: null, username: null };
-
-async function refreshCommunity() {
-  try {
-    COMMUNITY = await invoke("community_state");
-  } catch (error) {
-    COMMUNITY = { server: null, username: null };
-  }
-  return COMMUNITY;
-}
-
-/** A labelled input. */
-function field(label, attrs) {
-  const input = el("input", { attrs });
-  return [el("label", { className: "field" }, [el("span", { text: label }), input]), input];
-}
-
-async function openCommunity(tab = "feed") {
-  showView("community");
-  const page = document.getElementById("community-body");
-  clear(page);
-  await refreshCommunity();
-
-  // No server: what this is, why there is none, and where one would go.
-  if (!COMMUNITY.server) {
-    page.appendChild(el("p", { className: "lede", text: t("ui.community.none") }));
-    page.appendChild(serverForm());
-    return;
-  }
-
-  // A server, nobody signed in: sign in or make an account.
-  if (!COMMUNITY.username) {
-    page.appendChild(el("p", { className: "lede", text: t("ui.community.at", COMMUNITY.server) }));
-    const forms = el("div", { className: "auth" });
-    const [loginField, login] = field(t("ui.community.login"), { autocomplete: "username" });
-    const [passField, pass] = field(t("ui.community.password"), { type: "password", autocomplete: "current-password" });
-    const signIn = el("form", { className: "card-panel auth-form" }, [
-      el("h3", { text: t("ui.community.signin") }),
-      loginField,
-      passField,
-      el("button", { className: "button play", attrs: { type: "submit" }, text: t("ui.community.signin") }),
-    ]);
-    signIn.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      try {
-        await cq("POST", "/v0/sessions", { login: login.value.trim(), password: pass.value });
-        pass.value = "";
-        openCommunity();
-      } catch (error) {
-        toast(error);
-      }
-    });
-    const [userField, user] = field(t("ui.community.username"), { autocomplete: "username", maxlength: "24" });
-    const [mailField, mail] = field(t("ui.community.email"), { type: "email", autocomplete: "email" });
-    const [newPassField, newPass] = field(t("ui.community.password"), {
-      type: "password",
-      autocomplete: "new-password",
-      minlength: "10",
-    });
-    const register = el("form", { className: "card-panel auth-form" }, [
-      el("h3", { text: t("ui.community.register") }),
-      el("p", { className: "hint", text: t("ui.community.minimal") }),
-      userField,
-      mailField,
-      newPassField,
-      el("button", { className: "button ghost", attrs: { type: "submit" }, text: t("ui.community.register") }),
-    ]);
-    register.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      try {
-        await cq("POST", "/v0/accounts", { username: user.value.trim(), email: mail.value.trim(), password: newPass.value });
-        await cq("POST", "/v0/sessions", { login: user.value.trim(), password: newPass.value });
-        newPass.value = "";
-        toast(t("ui.community.welcome", user.value.trim()));
-        openCommunity();
-      } catch (error) {
-        toast(error);
-      }
-    });
-    forms.appendChild(signIn);
-    forms.appendChild(register);
-    page.appendChild(forms);
-    page.appendChild(serverForm());
-    return;
-  }
-
-  // Signed in: the feed, friends and people, and the account.
-  const tabs = el("div", { className: "chips", attrs: { role: "tablist" } });
-  for (const [name, key] of [
-    ["feed", "ui.community.feed"],
-    ["top", "ui.community.top"],
-    ["friends", "ui.community.friends"],
-    ["account", "ui.community.account"],
-  ]) {
-    tabs.appendChild(
-      el("button", {
-        className: "chip",
-        text: t(key),
-        attrs: { type: "button", role: "tab", "aria-selected": String(name === tab), "aria-pressed": String(name === tab) },
-        onClick: () => openCommunity(name),
-      })
-    );
-  }
-  page.appendChild(el("p", { className: "lede", text: t("ui.community.signedin", COMMUNITY.username, COMMUNITY.server) }));
-  page.appendChild(tabs);
-  const body = el("div", { className: "community-tab" });
-  page.appendChild(body);
-  try {
-    if (tab === "feed") await drawFeed(body);
-    else if (tab === "top") await drawTop(body);
-    else if (tab === "friends") await drawFriends(body);
-    else await drawAccount(body);
-  } catch (error) {
-    body.appendChild(el("div", { className: "spinner", text: String(error) }));
-  }
-}
-
-function serverForm() {
-  const [serverField, address] = field(t("ui.community.server"), {
-    type: "url",
-    placeholder: "https://",
-    spellcheck: "false",
-  });
-  address.value = COMMUNITY.server || "";
-  const form = el("form", { className: "card-panel auth-form" }, [
-    el("h3", { text: t("ui.community.server") }),
-    el("p", { className: "hint", text: t("ui.community.servernote") }),
-    serverField,
-    el("button", { className: "button ghost", attrs: { type: "submit" }, text: t("ui.community.useserver") }),
-  ]);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      await ask("community_server", { address: address.value });
-      openCommunity();
-    } catch (error) {
-      // `ask` said it.
-    }
-  });
-  return form;
-}
-
-/** A score as a line: who, what, how much, and what they wrote. */
-function scoreLine(username, rating) {
-  const title = rating.title || {};
-  const line = el("div", { className: "score-line" });
-  const thumb = el("div", { className: "cal-thumb" });
-  if (title.poster) thumb.appendChild(image(title.poster, ""));
-  line.appendChild(thumb);
-  const text = el("div", { className: "grow" }, [
-    el("div", { className: "title" }, [
-      username ? el("button", { className: "name-link", text: username, attrs: { type: "button" }, onClick: () => openUser(username) }) : null,
-      document.createTextNode(username ? ` · ${title.name || rating.id}` : title.name || rating.id),
-    ]),
-    el("div", { className: "when", text: `★ ${rating.score}/10${title.year ? ` · ${title.year}` : ""}` }),
-    rating.review ? el("p", { className: "synopsis", text: rating.review }) : null,
-  ]);
-  line.appendChild(text);
-  line.appendChild(
-    el("button", {
-      className: "text-button",
-      attrs: { type: "button" },
-      text: t("ui.action.details"),
-      onClick: () => openDetail(rating.type, rating.id),
-    })
-  );
-  return line;
-}
-
-async function drawFeed(body) {
-  const feed = await cq("GET", "/v0/feed");
-  if (!feed.length) {
-    body.appendChild(el("div", { className: "spinner", text: t("ui.community.feedempty") }));
-    return;
-  }
-  for (const entry of feed) body.appendChild(scoreLine(entry.username, entry.rating));
-}
-
-/** The community's best: titles ranked by the scores people gave them,
- *  each from five scores up. */
-async function drawTop(body, type = "movie") {
-  clear(body);
-  const pick = el("div", { className: "chips" });
-  for (const kind of ["movie", "series"]) {
-    pick.appendChild(
-      el("button", {
-        className: "chip",
-        text: typeName(kind),
-        attrs: { type: "button", "aria-pressed": String(kind === type) },
-        onClick: () => drawTop(body, kind),
-      })
-    );
-  }
-  body.appendChild(pick);
-  let top;
-  try {
-    top = await cq("GET", `/v0/top/${type}`);
-  } catch (error) {
-    body.appendChild(el("div", { className: "spinner", text: String(error) }));
-    return;
-  }
-  if (!top.length) {
-    body.appendChild(el("div", { className: "spinner", text: t("ui.community.topempty") }));
-    return;
-  }
-  top.forEach((entry, at) => {
-    const line = scoreLine(null, { type: entry.type, id: entry.id, title: entry.title, score: Number(entry.average).toFixed(1) });
-    line.insertBefore(el("span", { className: "rank", text: String(at + 1) }), line.firstChild);
-    line.querySelector(".when").textContent = t("ui.community.average", Number(entry.average).toFixed(1), entry.count);
-    body.appendChild(line);
-  });
-}
-
-async function drawFriends(body) {
-  // Find people by username.
-  const [searchField, query] = field(t("ui.community.find"), { type: "search", autocomplete: "off", maxlength: "24" });
-  const results = el("div", { className: "stack" });
-  let typing = 0;
-  query.addEventListener("input", () => {
-    clearTimeout(typing);
-    typing = setTimeout(async () => {
-      clear(results);
-      const text = query.value.trim();
-      if (text.length < 2) return;
-      try {
-        const found = await cq("GET", `/v0/users?q=${encodeURIComponent(text)}`);
-        for (const person of found) results.appendChild(personRow(person.username, t("ui.community.scores", person.count)));
-        if (!found.length) results.appendChild(el("div", { className: "hint", text: t("ui.community.nobody") }));
-      } catch (error) {
-        toast(error);
-      }
-    }, 350);
-  });
-  body.appendChild(searchField);
-  body.appendChild(results);
-
-  const lists = await cq("GET", "/v0/friends");
-  const section = (key, names, actions) => {
-    if (!names.length) return;
-    body.appendChild(el("h3", { className: "section-title", text: t(key) }));
-    for (const name of names) body.appendChild(personRow(name, "", actions(name)));
-  };
-  section("ui.community.incoming", lists.incoming, (name) => [
-    el("button", { className: "button play", text: t("ui.community.accept"), attrs: { type: "button" }, onClick: () => befriend(name, true) }),
-    el("button", { className: "text-button quiet", text: t("ui.community.decline"), attrs: { type: "button" }, onClick: () => befriend(name, false) }),
-  ]);
-  section("ui.community.friendlist", lists.friends, (name) => [
-    el("button", { className: "text-button quiet", text: t("ui.community.unfriend"), attrs: { type: "button" }, onClick: () => befriend(name, false) }),
-  ]);
-  section("ui.community.outgoing", lists.outgoing, (name) => [
-    el("button", { className: "text-button quiet", text: t("ui.community.withdraw"), attrs: { type: "button" }, onClick: () => befriend(name, false) }),
-  ]);
-  if (!lists.friends.length && !lists.incoming.length && !lists.outgoing.length) {
-    body.appendChild(el("div", { className: "hint", text: t("ui.community.nofriends") }));
-  }
-}
-
-function personRow(username, note, actions = []) {
-  return el("div", { className: "person" }, [
-    el("button", { className: "name-link", text: username, attrs: { type: "button" }, onClick: () => openUser(username) }),
-    note ? el("span", { className: "hint", text: note }) : null,
-    el("span", { className: "grow" }),
-    ...actions,
-  ]);
-}
-
-async function befriend(username, yes) {
-  try {
-    if (yes) await cq("POST", `/v0/friends/${encodeURIComponent(username)}`);
-    else await cq("DELETE", `/v0/friends/${encodeURIComponent(username)}`);
-    openCommunity("friends");
-  } catch (error) {
-    toast(error);
-  }
-}
-
-/** Someone's page: their numbers and newest scores, and a friend request. */
-async function openUser(username) {
-  showView("community");
-  const page = document.getElementById("community-body");
-  clear(page);
-  let person;
-  try {
-    person = await cq("GET", `/v0/users/${encodeURIComponent(username)}`);
-  } catch (error) {
-    toast(error);
-    return;
-  }
-  page.appendChild(el("h3", { className: "section-title", text: person.username }));
-  page.appendChild(
-    el("div", { className: "stat-row" }, [
-      el("div", { className: "stat" }, [el("strong", { text: String(person.count) }), el("span", { text: t("ui.profile.count") })]),
-      el("div", { className: "stat" }, [
-        el("strong", { text: person.average === null ? "—" : Number(person.average).toFixed(1) }),
-        el("span", { text: t("ui.community.theiraverage") }),
-      ]),
-    ])
-  );
-  if (COMMUNITY.username && COMMUNITY.username !== person.username) {
-    page.appendChild(
-      el("div", { className: "loading-actions" }, [
-        el("button", {
-          className: "button play",
-          text: t("ui.community.addfriend"),
-          attrs: { type: "button" },
-          onClick: async () => {
-            try {
-              const answer = await cq("POST", `/v0/friends/${encodeURIComponent(person.username)}`);
-              toast(answer.state === "friends" ? t("ui.community.nowfriends", person.username) : t("ui.community.asked", person.username));
-            } catch (error) {
-              toast(error);
-            }
-          },
-        }),
-        el("button", {
-          className: "text-button quiet",
-          text: t("ui.community.report"),
-          attrs: { type: "button" },
-          onClick: () => report({ kind: "user", target: { username: person.username } }),
-        }),
-      ])
-    );
-  }
-  for (const rating of person.ratings) page.appendChild(scoreLine(null, rating));
-}
-
-async function drawAccount(body) {
-  const me = await cq("GET", "/v0/me");
-  body.appendChild(el("p", { text: t("ui.community.me", me.username, me.email) }));
-  const out = el("pre", { className: "export" });
-  out.hidden = true;
-  body.appendChild(
-    el("div", { className: "loading-actions" }, [
-      el("button", {
-        className: "button ghost",
-        text: t("ui.community.signout"),
-        attrs: { type: "button" },
-        onClick: async () => {
-          try {
-            await cq("DELETE", "/v0/sessions");
-          } catch (error) {
-            // Signed out here either way.
-          }
-          openCommunity();
-        },
-      }),
-      el("button", {
-        className: "button ghost",
-        text: t("ui.community.export"),
-        attrs: { type: "button" },
-        onClick: async () => {
-          try {
-            out.textContent = JSON.stringify(await cq("GET", "/v0/me/export"), null, 2);
-            out.hidden = false;
-          } catch (error) {
-            toast(error);
-          }
-        },
-      }),
-      el("button", {
-        className: "button danger",
-        text: t("ui.community.delete"),
-        attrs: { type: "button" },
-        onClick: async (event) => {
-          const button = event.currentTarget;
-          // Two presses: the second one is the decision.
-          if (!button.dataset.armed) {
-            button.dataset.armed = "true";
-            button.textContent = t("ui.community.deletesure");
-            return;
-          }
-          try {
-            await cq("DELETE", "/v0/me");
-            toast(t("ui.community.deleted"));
-            openCommunity();
-          } catch (error) {
-            toast(error);
-          }
-        },
-      }),
-    ])
-  );
-  body.appendChild(out);
-}
-
-async function report(what) {
-  try {
-    await cq("POST", "/v0/reports", { ...what, reason: "" });
-    toast(t("ui.community.reported"));
-  } catch (error) {
-    toast(error);
-  }
-}
-
-/** What the community said about a title, on its page: the average once
- *  there are enough scores, and the reviews. Drawn only when a server is
- *  set; nothing is asked otherwise. */
-async function communityBox(detail, container) {
-  await refreshCommunity();
-  if (!COMMUNITY.server) return;
-  let title;
-  try {
-    title = await cq("GET", `/v0/titles/${encodeURIComponent(detail.content_type)}/${encodeURIComponent(detail.id)}`);
-  } catch (error) {
-    return;
-  }
-  if (DETAIL !== detail) return;
-  const box = el("section", { className: "community-box" }, [el("h2", { className: "section-title", text: t("ui.community.title") })]);
-  box.appendChild(
-    el("p", {
-      className: "lede",
-      text: title.average === null ? t("ui.community.few", title.count) : t("ui.community.average", Number(title.average).toFixed(1), title.count),
-    })
-  );
-  for (const review of title.reviews) {
-    const line = scoreLine(review.username, { ...review, type: detail.content_type, id: detail.id, title: { name: detail.name } });
-    line.querySelector(".text-button").replaceWith(
-      el("button", {
-        className: "text-button quiet",
-        text: t("ui.community.report"),
-        attrs: { type: "button" },
-        onClick: () => report({ kind: "review", target: { username: review.username, type: detail.content_type, id: detail.id } }),
-      })
-    );
-    box.appendChild(line);
-  }
-  container.appendChild(box);
-}
-
-/** Share a score the viewer just gave, when they are signed in. */
-async function shareRating(rating, detail) {
-  if (!COMMUNITY.username) return;
-  const path = `/v0/ratings/${encodeURIComponent(detail.content_type)}/${encodeURIComponent(detail.id)}`;
-  try {
-    if (!rating) await cq("DELETE", path);
-    else
-      await cq("PUT", path, {
-        score: rating.score,
-        review: rating.review || null,
-        title: { name: rating.name, year: rating.year || null, poster: rating.poster || null },
-      });
-  } catch (error) {
-    toast(t("ui.community.notshared", String(error)));
-  }
 }
 
 // ----------------------------------------------------------------- downloads
@@ -2931,6 +2849,8 @@ async function loadSettings() {
     loadRows();
   });
   languagePanel.appendChild(row(t("ui.settings.language"), interfaceLanguage));
+  await loadProfiles();
+  languagePanel.appendChild(row(t("ui.window.title"), windowPicker(PROFILES.window || "maximized", true)));
   form.appendChild(languagePanel);
 
   for (const section of SETTINGS_SECTIONS) {
@@ -3313,7 +3233,7 @@ function spatial(event) {
   const active = document.activeElement;
   if (isTyping(active) || (active && active.closest('[role="slider"], [role="radiogroup"], #menu'))) return;
   const view = [...document.querySelectorAll(".view")].find((section) => !section.hidden);
-  const scope = [document.getElementById("nav"), view, document.getElementById("loading")].filter(
+  const scope = [document.getElementById("nav"), document.getElementById("side"), view, document.getElementById("loading")].filter(
     (node) => node && !node.hidden
   );
   const visible = (node) => {
@@ -3385,6 +3305,9 @@ async function boot() {
   for (const node of document.querySelectorAll("[data-go]")) {
     node.addEventListener("click", () => go(node.dataset.go));
   }
+  initSide();
+  // Unread community notifications, when signed in to a server.
+  refreshCommunity().then(refreshBadge);
 
   window.addEventListener("scroll", solidNav, { passive: true });
 
@@ -3512,6 +3435,9 @@ async function boot() {
 
   document.getElementById("who-open").addEventListener("click", openAvatarMenu);
   await loadProfiles();
+  const opening = PROFILES.profiles.find((p) => p.id === PROFILES.current);
+  PIN_GATE = Boolean(opening && opening.locked);
+  if (PIN_GATE) openWho(false);
   showView("home");
   await loadRows();
   // The first time, the setup; with several profiles, who is watching.

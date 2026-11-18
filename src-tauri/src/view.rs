@@ -255,6 +255,9 @@ pub struct PlayerView {
     pub next: Option<NextView>,
     /// Whether the next episode starts by itself.
     pub autoplay: bool,
+    /// What is playing, as `[type, id]` -- the addon's ids, for the skip
+    /// markers a community keeps per episode. Never an address.
+    pub item: Option<(String, String)>,
 }
 
 /// The episode that comes next, for the player's "Next episode".
@@ -396,7 +399,11 @@ pub struct AboutView {
 // ------------------------------------------------------------------ building
 
 /// Year and rating as a person reads them.
-fn item_from_preview(preview: &MetaPreview, library: &Library, history: &WatchHistory) -> ItemView {
+pub fn item_from_preview(
+    preview: &MetaPreview,
+    library: &Library,
+    history: &WatchHistory,
+) -> ItemView {
     let entry = history.get(&preview.content_type, &preview.id);
     ItemView {
         id: preview.id.clone(),
@@ -448,10 +455,18 @@ pub fn rows(session: &Session) -> Vec<RowView> {
             // something looks like. The library often has one for the same
             // item, so it is borrowed when it is there and the card draws
             // without one when it is not.
-            let poster = session
-                .library
-                .get(&entry.content_type, &entry.id)
-                .and_then(|kept| kept.poster.clone())
+            // What the title looks like: remembered when it played
+            // (`art`), else borrowed from the library.
+            let (_, title_id) = crate::art::title_of(entry);
+            let look = session.art.get(&title_id);
+            let poster = look
+                .and_then(|look| look.poster.clone())
+                .or_else(|| {
+                    session
+                        .library
+                        .get(&entry.content_type, &entry.id)
+                        .and_then(|kept| kept.poster.clone())
+                })
                 .or_else(|| {
                     entry.series_id.as_ref().and_then(|series| {
                         session
@@ -460,10 +475,16 @@ pub fn rows(session: &Session) -> Vec<RowView> {
                             .and_then(|kept| kept.poster.clone())
                     })
                 });
+            // The card says the title, and only the title: where it got to
+            // is the badge (SxxEyy) and the line under it (the minute).
+            let name = look.map_or_else(
+                || crate::art::bare_name(&entry.name),
+                |look| look.name.clone(),
+            );
             ItemView {
                 id: entry.id.clone(),
                 content_type: entry.content_type.clone(),
-                name: entry.name.clone(),
+                name,
                 poster,
                 description: None,
                 year: None,
@@ -996,7 +1017,7 @@ pub fn page_items(session: &mut Session, previews: Vec<MetaPreview>) -> Vec<Item
 
 /// Keep a listing, so saving to the library has a poster and a name without
 /// another request -- the newest listings, up to [`PREVIEWS_KEPT`].
-fn remember(session: &mut Session, previews: Vec<MetaPreview>) {
+pub fn remember(session: &mut Session, previews: Vec<MetaPreview>) {
     session.previews.extend(previews);
     let over = session.previews.len().saturating_sub(PREVIEWS_KEPT);
     if over > 0 {
@@ -1438,6 +1459,10 @@ pub fn status(session: &mut Session) -> StatusView {
                     .is_ok_and(|value| value == "true"),
                 next,
                 autoplay: session.settings.playback.autoplay_next,
+                item: session
+                    .playing
+                    .as_ref()
+                    .map(|p| (p.content_type.clone(), p.id.clone())),
             };
         }
     }
@@ -1518,6 +1543,8 @@ pub fn about(session: &Session) -> AboutView {
             "eon-downloads.json",
             "eon-profiles.json",
             "eon-profiles/",
+            "eon-art.json",
+            "eon-pins.json",
             "eon-webview/",
         ]
         .iter()
@@ -1551,6 +1578,9 @@ pub fn library_save(session: &mut Session, content_type: &str, id: &str) -> Resu
                     description: m.description.clone(),
                     release_info: m.release_info.clone(),
                     imdb_rating: None,
+                    genres: Vec::new(),
+                    country: None,
+                    language: None,
                 })
         })
         .ok_or_else(|| session.text("ui.error.unknownitem"))?;

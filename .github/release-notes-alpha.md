@@ -126,14 +126,17 @@ for subtitles fetched for what is playing (emptied at every start and on exit),
 numbers only, for sorting sources by speed), `eon-ratings.json` for your own
 scores and reviews, `eon-community.json` for a community server you chose and your
 session on it, `eon-downloads.json` for what you downloaded to watch later, `eon-profiles.json`
-and `eon-profiles/` for the profiles on this computer and what each keeps,
+and `eon-profiles/` for the profiles on this computer and what each keeps, `eon-art.json`
+for what the titles you watched look like, `eon-pins.json` for the profile PINs (hashed),
 and `eon-webview/`, the window's browser profile. Builds up to `v0.17` put that
 profile in `%LOCALAPPDATA%\org.eonstream.stream` instead; that folder can be
 deleted. Delete any of them to start that part over.
 
 Nothing leaves your machine except requests to addons you added yourself, the
-torrent swarms you asked for, and — only when you type `update` — a check
-against the release manifest.
+torrent swarms you asked for, a community server only if you entered one (and
+then only what you chose to publish — never what you watched), and — only when
+you type `update` — a check against the release manifest. Recommendations are
+worked out on your machine.
 
 In `v0.12` that was not quite true: the torrent engine's DHT also wrote a state
 file into an OS config directory, with a record of which swarms the machine had

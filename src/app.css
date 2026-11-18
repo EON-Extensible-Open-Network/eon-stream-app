@@ -42,7 +42,11 @@ kind of table for a declarative theme.
   --radius-lg: 12px;
   --gutter: clamp(20px, 4vw, 60px);
   --card-w: clamp(132px, 12.4vw, 210px);
-  --nav-h: 68px;
+  --nav-h: 64px;
+  /* The side menu, open and folded. */
+  --side-w: 232px;
+  --side-mini: 78px;
+  --side: var(--side-w);
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
@@ -224,21 +228,130 @@ p {
 
 /* ---------------------------------------------------------------------- nav */
 
+/* The top bar holds only what is used from anywhere: the menu, the name
+   (home), search and the avatar. Where to go lives in the side menu. */
 .nav {
   position: fixed;
   inset: 0 0 auto 0;
   z-index: 20;
   height: var(--nav-h);
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: clamp(16px, 3vw, 40px);
-  padding: 0 var(--gutter);
-  background: linear-gradient(180deg, rgba(7, 9, 14, 0.85) 0%, rgba(7, 9, 14, 0) 100%);
-  transition: background-color 0.3s;
+  gap: 24px;
+  padding: 0 20px 0 14px;
+  background: var(--bg);
 }
 
-.nav.solid {
-  background-color: var(--bg);
+.nav-start {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+body.side-mini {
+  --side: var(--side-mini);
+}
+
+/* --------------------------------------------------------------- side menu */
+
+.side {
+  position: fixed;
+  top: var(--nav-h);
+  bottom: 0;
+  left: 0;
+  z-index: 19;
+  width: var(--side);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 8px 12px 24px;
+  background: var(--bg);
+}
+
+.side-group {
+  display: grid;
+  gap: 2px;
+}
+
+.side .link {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 14.5px;
+  text-align: left;
+}
+
+.side .link .icon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+.side .link:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.side .link[aria-current="true"] {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.side .link .dot {
+  order: 2;
+  margin-left: auto;
+}
+
+body.side-mini .side .link .dot {
+  position: absolute;
+  margin: 0 0 0 26px;
+  top: 8px;
+}
+
+.side .link {
+  position: relative;
+}
+
+.side-rule {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 12px 6px;
+}
+
+.side-head {
+  padding: 4px 14px 8px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+/* Folded: icons with a small word under each, the primary places only. */
+body.side-mini .side {
+  padding: 4px 4px 24px;
+}
+
+body.side-mini .side .link {
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-height: 72px;
+  padding: 10px 2px 8px;
+  font-size: 10.5px;
+  text-align: center;
+}
+
+body.side-mini .side .link .say {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.side-mini .side-more,
+body.side-mini .side-rule {
+  display: none;
 }
 
 .brand {
@@ -294,12 +407,6 @@ p {
   letter-spacing: 0.01em;
 }
 
-.links {
-  display: flex;
-  gap: clamp(10px, 1.6vw, 22px);
-  min-width: 0;
-}
-
 .link {
   color: var(--muted);
   font-size: 14.5px;
@@ -318,40 +425,54 @@ p {
 }
 
 .nav-tools {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
+/* Search is always there, in the middle, as wide as it is useful. */
 .searchbox {
+  justify-self: center;
   display: flex;
-  align-items: center;
-  height: 40px;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  transition: border-color 0.2s, background-color 0.2s;
+  align-items: stretch;
+  width: min(100%, 640px);
+  height: 42px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+.searchbox:focus-within {
+  border-color: var(--accent);
 }
 
 .searchbox input {
-  width: 0;
-  padding: 0;
+  flex: 1;
+  min-width: 0;
+  padding: 0 18px;
   border: none;
   background: transparent;
+  color: var(--text);
   outline: none;
-  transition: width 0.25s var(--ease), padding 0.25s;
 }
 
-.searchbox.open,
-.searchbox:focus-within {
-  border-color: var(--line-strong);
-  background: rgba(7, 9, 14, 0.82);
+.search-go {
+  display: grid;
+  place-items: center;
+  width: 62px;
+  color: var(--text);
+  border-left: 1px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.07);
 }
 
-.searchbox.open input,
-.searchbox:focus-within input {
-  width: clamp(160px, 22vw, 280px);
-  padding-right: 12px;
+.search-go:hover {
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.search-go .icon {
+  width: 20px;
+  height: 20px;
 }
 
 .searchbox input::-webkit-search-cancel-button {
@@ -363,6 +484,7 @@ p {
 main {
   min-height: 100vh;
   padding-bottom: 60px;
+  margin-left: var(--side);
 }
 
 .page {
@@ -1739,6 +1861,230 @@ button.pill:focus-visible {
   outline-offset: 3px;
 }
 
+/* ---------------------------------------------------------- the community */
+
+.dialog-card textarea,
+.field textarea,
+.fact-form textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-raised);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.chips.tabs {
+  margin-bottom: 18px;
+}
+
+.community-tab > .chips,
+.cm-panel > .chips,
+.community-box .chips {
+  margin: 4px 0 14px;
+}
+
+.cm-score {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 24px;
+}
+
+.cm-score .histogram {
+  height: 70px;
+  width: min(100%, 360px);
+}
+
+.title-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.title-tile {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  color: var(--text);
+}
+
+.cal-thumb.tall {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.cal-thumb.tall img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.title-tile:hover .tile-name,
+.title-tile:focus-visible .tile-name {
+  text-decoration: underline;
+}
+
+.tile-name {
+  font-size: 13.5px;
+  line-height: 1.3;
+}
+
+.spoiler {
+  filter: blur(6px);
+  user-select: none;
+}
+
+.fact {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.fact-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.fact-form .button {
+  justify-self: start;
+}
+
+.community-box > .loading-actions {
+  margin: 12px 0 16px;
+}
+
+.fact-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  max-width: 720px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.parental-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) minmax(90px, 140px) auto;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.parental-row .chips {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.verdict {
+  font-weight: 700;
+}
+
+.verdict.level-mild {
+  color: #9fd8a8;
+}
+
+.verdict.level-moderate {
+  color: #f0c674;
+}
+
+.verdict.level-severe {
+  color: #ff8a80;
+}
+
+.queue-item {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.score-line.unread .title {
+  font-weight: 700;
+}
+
+.score-line.won .rank {
+  color: #f0c674;
+}
+
+.poll-option .meter {
+  margin: 6px 0;
+  max-width: 420px;
+}
+
+.poll-option.mine .title {
+  font-weight: 700;
+}
+
+.warn {
+  color: #f0c674;
+}
+
+/* ---------------------------------------------------------------- the feed */
+
+.feed {
+  padding: 28px var(--gutter) 0;
+}
+
+.feed .row-head {
+  margin-bottom: 14px;
+}
+
+.feed-end {
+  text-align: center;
+  padding: 28px 0;
+}
+
+/* -------------------------------------------------------------- the pager */
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 40px 0 10px;
+}
+
+.page-number,
+.page-step {
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+}
+
+.page-number.on {
+  color: #0a0c12;
+  background: var(--text);
+  border-color: var(--text);
+  font-weight: 700;
+}
+
+.page-number:hover,
+.page-step:hover,
+.page-number:focus-visible,
+.page-step:focus-visible {
+  color: var(--text);
+  border-color: var(--text);
+}
+
 /* ------------------------------------------------------------- hero dots */
 
 .hero-dots {
@@ -2568,4 +2914,17 @@ button.pill:focus-visible {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ------------------------------------------------------- kids and PIN locks */
+
+.who-badges {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.who-extras {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
 }

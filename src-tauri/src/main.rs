@@ -43,6 +43,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![forbid(unsafe_code)]
 
+mod art;
 mod buffer;
 mod commands;
 mod community;
@@ -51,6 +52,8 @@ mod http;
 mod keeper;
 mod profiles;
 mod ratings;
+mod recommend;
+mod search;
 mod speeds;
 mod state;
 mod subs;
@@ -151,6 +154,8 @@ fn window(play: Option<String>) {
             commands::rows,
             commands::row_items,
             commands::search,
+            commands::search_page,
+            commands::recommend,
             commands::detail,
             commands::feature,
             commands::sources,
@@ -158,12 +163,16 @@ fn window(play: Option<String>) {
             commands::rating_get,
             commands::rating_set,
             commands::profile,
+            commands::fill_art,
             commands::profiles,
             commands::profile_add,
             commands::profile_switch,
             commands::profile_edit,
             commands::profile_remove,
             commands::onboarding_done,
+            commands::profile_kids,
+            commands::profile_pin,
+            commands::window_mode_set,
             commands::download,
             commands::downloads,
             commands::download_play,

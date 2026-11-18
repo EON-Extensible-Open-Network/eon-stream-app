@@ -114,6 +114,22 @@ const ICONS = {
     ["circle", { cx: 12, cy: 18.5, r: 1.6, fill: "currentColor", stroke: "none" }],
   ],
   addon: [["path", { d: "M9.5 3.5h5v3a1.8 1.8 0 1 0 3.5 0v-3H20.5v6h-3a1.8 1.8 0 1 0 0 3.5h3v7.5h-17v-17z" }]],
+  menu: [["path", { d: "M4 6.5h16M4 12h16M4 17.5h16" }]],
+  home: [["path", { d: "M4 10.5L12 4l8 6.5V20h-5.5v-5.5h-5V20H4z" }]],
+  tv: [
+    ["rect", { x: 3, y: 6, width: 18, height: 12.5, rx: 2 }],
+    ["path", { d: "M8.5 2.8L12 6l3.5-3.2M8 21h8" }],
+  ],
+  film: [
+    ["rect", { x: 3.5, y: 3.5, width: 17, height: 17, rx: 2 }],
+    ["path", { d: "M8 3.5v17M16 3.5v17M3.5 8.2H8M3.5 15.8H8M16 8.2h4.5M16 15.8h4.5" }],
+  ],
+  flame: [["path", { d: "M12 21c-3.9 0-6.5-2.6-6.5-6.2 0-3.4 2.3-5.4 3.8-7.6.4 1.6 1.2 2.7 2.4 3.3C11.4 7.2 12.8 4.6 15 3c-.2 2.8 3.5 5.6 3.5 11.2 0 3.9-2.7 6.8-6.5 6.8z" }]],
+  compass: [
+    ["circle", { cx: 12, cy: 12, r: 8.5 }],
+    ["path", { d: "M15.5 8.5l-2 5-5 2 2-5z" }],
+  ],
+  bookmark: [["path", { d: "M6.5 3.5h11v17L12 16.5l-5.5 4z" }]],
 };
 
 /** An icon as an SVG element, optionally with a number drawn inside it. */

@@ -237,6 +237,12 @@ pub struct Session {
     pub downloads: crate::downloads::Downloads,
     /// Who is watching: whose history, library and scores these are.
     pub profiles: crate::profiles::Profiles,
+    /// What titles look like, for cards history cannot draw.
+    pub art: crate::art::Art,
+    /// The search in progress, page by page.
+    pub search: Option<crate::search::Search>,
+    /// "Recommended for you", page by page.
+    pub feed: Option<crate::recommend::Feed>,
 }
 
 impl Session {
@@ -297,6 +303,9 @@ impl Session {
             ratings: crate::ratings::Ratings::load(&profiles.current),
             community: crate::community::Community::load(),
             downloads: crate::downloads::Downloads::load(),
+            art: crate::art::Art::load(&profiles.current),
+            search: None,
+            feed: None,
             profiles,
         }
     }
@@ -411,6 +420,7 @@ impl Session {
         )
         .unwrap_or_default();
         self.ratings = crate::ratings::Ratings::load(id);
+        self.art = crate::art::Art::load(id);
         // What was worked out for the last profile is theirs.
         self.calendar = None;
         Ok(())

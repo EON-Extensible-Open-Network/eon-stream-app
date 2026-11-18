@@ -129,6 +129,9 @@ pub fn list(library: &Library, rest: &[&str], text: &Text) -> Vec<MetaPreview> {
             description: None,
             release_info: entry.release_info.clone(),
             imdb_rating: None,
+            genres: Vec::new(),
+            country: None,
+            language: None,
         })
         .collect();
 
@@ -179,6 +182,9 @@ mod tests {
             description: None,
             release_info: Some("2015".to_owned()),
             imdb_rating: None,
+            genres: Vec::new(),
+            country: None,
+            language: None,
         }
     }
 

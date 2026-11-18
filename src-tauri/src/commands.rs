@@ -330,6 +330,23 @@ pub async fn search(state: State<'_, Shared>, query: String) -> Out<SearchView> 
     .await
 }
 
+/// One page of a search, forty-two titles, read from the addons only as far
+/// as that page needs.
+#[tauri::command]
+pub async fn search_page(
+    state: State<'_, Shared>,
+    query: String,
+    page: usize,
+) -> Out<crate::search::PageView> {
+    with_network(
+        &state,
+        move |session| crate::search::request(session, &query, page),
+        crate::search::fetch,
+        move |session, _, search| Ok(crate::search::view(session, search, page)),
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn detail(state: State<'_, Shared>, content_type: String, id: String) -> Out<DetailView> {
     let (ct, item) = (content_type.clone(), id.clone());
@@ -602,16 +619,25 @@ pub async fn community_request(
                     .get("username")
                     .and_then(|v| v.as_str())
                     .map(ToOwned::to_owned);
+                let role = answer
+                    .body
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
                 if let (Some(token), Some(username)) = (token, username) {
-                    session.community.signed_in(token, username);
+                    session.community.signed_in(token, username, role);
                 }
                 // The token stays here.
                 if let Some(object) = answer.body.as_object_mut() {
                     object.remove("token");
                 }
             }
+            // A 401 means the session is gone -- except where it answers a
+            // password that was typed wrong.
+            let typed = path == "/v0/sessions" || path == "/v0/me/password";
             let signed_out = (ok && m == "DELETE" && (path == "/v0/sessions" || path == "/v0/me"))
-                || answer.status == 401;
+                || (ok && path == "/v0/me/password")
+                || (answer.status == 401 && !typed);
             if signed_out {
                 session.community.signed_out();
             }
@@ -865,6 +891,71 @@ pub async fn download_play(state: State<'_, Shared>, hex: String) -> Out<()> {
     .map_err(|e| e.to_string())?
 }
 
+/// Whether a file dropped on the window is something to play.
+#[must_use]
+pub fn is_video(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
+        .is_some_and(|e| {
+            matches!(
+                e.as_str(),
+                "mkv"
+                    | "mp4"
+                    | "m4v"
+                    | "avi"
+                    | "mov"
+                    | "webm"
+                    | "wmv"
+                    | "flv"
+                    | "ts"
+                    | "m2ts"
+                    | "mpg"
+                    | "mpeg"
+                    | "ogv"
+                    | "3gp"
+            )
+        })
+}
+
+/// Play a video file from this computer -- one dropped on the window. Its
+/// path stays here: the interface is told only that something plays, and
+/// nothing is recorded in history, which keeps titles, not files.
+pub fn play_local(shared: &Shared, path: std::path::PathBuf) -> Out<()> {
+    let ticket = {
+        let session = shared
+            .lock()
+            .map_err(|_| "the host lost track of its own state".to_owned())?;
+        session
+            .job
+            .lock()
+            .map(|mut job| job.begin())
+            .unwrap_or_default()
+    };
+    let size = std::fs::metadata(&path).ok().map(|m| m.len());
+    let search = subs::Search {
+        ticket,
+        subject: None,
+        filename: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned()),
+        video_hash: None,
+        size,
+        torrent: None,
+        file_index: None,
+        source: None,
+    };
+    launch(
+        shared,
+        PlaybackSource::File(path),
+        Vec::new(),
+        Vec::new(),
+        None,
+        search,
+        Start::Beginning,
+    )
+}
+
 /// Delete a download, finished or not, and its file.
 #[tauri::command]
 pub async fn download_remove(state: State<'_, Shared>, hex: String) -> Out<()> {
@@ -912,6 +1003,7 @@ pub async fn profile_add(
     color: u8,
 ) -> Out<crate::profiles::Profiles> {
     with_session(&state, move |session| {
+        grown_up(session)?;
         session
             .profiles
             .add(&name, color)
@@ -921,12 +1013,72 @@ pub async fn profile_add(
     .await
 }
 
+/// Profiles are changed from a grown-up's profile, never from a child's.
+fn grown_up(session: &Session) -> Result<(), String> {
+    if session.profiles.kids() {
+        Err(session.text("ui.profiles.kidsblocked"))
+    } else {
+        Ok(())
+    }
+}
+
+/// Make a profile a child's, or not.
+#[tauri::command]
+pub async fn profile_kids(
+    state: State<'_, Shared>,
+    id: String,
+    kids: bool,
+) -> Out<crate::profiles::Profiles> {
+    with_session(&state, move |session| {
+        grown_up(session)?;
+        let profile = session
+            .profiles
+            .profiles
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or_else(|| "no such profile".to_owned())?;
+        profile.kids = kids;
+        session.profiles.save();
+        session.feed = None;
+        Ok(session.profiles.clone())
+    })
+    .await
+}
+
+/// Set, change or clear a profile's PIN. Changing or clearing one takes the
+/// one it has.
+#[tauri::command]
+pub async fn profile_pin(
+    state: State<'_, Shared>,
+    id: String,
+    pin: Option<String>,
+    old: Option<String>,
+) -> Out<crate::profiles::Profiles> {
+    with_session(&state, move |session| {
+        grown_up(session)?;
+        if !crate::profiles::pin_opens(&id, old.as_deref()) {
+            return Err(session.text("ui.profiles.wrongpin"));
+        }
+        crate::profiles::set_pin(&id, pin.as_deref()).map_err(|key| session.text(key))?;
+        if let Some(profile) = session.profiles.profiles.iter_mut().find(|p| p.id == id) {
+            profile.locked = pin.is_some();
+        }
+        session.profiles.save();
+        Ok(session.profiles.clone())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn profile_switch(
     state: State<'_, Shared>,
     id: String,
+    pin: Option<String>,
 ) -> Out<crate::profiles::Profiles> {
     with_session(&state, move |session| {
+        if !crate::profiles::pin_opens(&id, pin.as_deref()) {
+            return Err(session.text("ui.profiles.wrongpin"));
+        }
         session
             .switch_profile(&id)
             .map_err(|key| session.text(key))?;
@@ -943,6 +1095,7 @@ pub async fn profile_edit(
     color: u8,
 ) -> Out<crate::profiles::Profiles> {
     with_session(&state, move |session| {
+        grown_up(session)?;
         session
             .profiles
             .rename(&id, &name, color)
@@ -958,6 +1111,8 @@ pub async fn profile_remove(
     id: String,
 ) -> Out<crate::profiles::Profiles> {
     with_session(&state, move |session| {
+        grown_up(session)?;
+        let _ = crate::profiles::set_pin(&id, None);
         session
             .profiles
             .remove(&id)
@@ -965,6 +1120,22 @@ pub async fn profile_remove(
         Ok(session.profiles.clone())
     })
     .await
+}
+
+/// How the window opens, and now.
+#[tauri::command]
+pub async fn window_mode_set(state: State<'_, Shared>, mode: String) -> Out<()> {
+    if !crate::profiles::WINDOW_MODES.contains(&mode.as_str()) {
+        return Err(format!("{mode} is not a window mode"));
+    }
+    let m = mode.clone();
+    with_session(&state, move |session| {
+        session.profiles.window = m;
+        session.profiles.save();
+        Ok(())
+    })
+    .await?;
+    crate::surface::apply_window_mode(&mode)
 }
 
 /// The first-run setup is done, or was skipped: it is not shown again.
@@ -975,6 +1146,78 @@ pub async fn onboarding_done(state: State<'_, Shared>) -> Out<()> {
         session.profiles.save();
         Ok(())
     })
+    .await
+}
+
+/// Ask the addons what the titles in continue watching look like, for those
+/// that played before their look was remembered. Answers how many were
+/// filled in; the home screen draws its row again when that is not zero.
+#[tauri::command]
+pub async fn fill_art(state: State<'_, Shared>) -> Out<usize> {
+    with_network(
+        &state,
+        |session| {
+            // Continue watching first -- those cards are on screen -- then
+            // the rest of history and the library, for the recommendations.
+            let mut missing: Vec<(String, String)> = session
+                .history
+                .continue_watching(12)
+                .into_iter()
+                .map(crate::art::title_of)
+                .collect();
+            let mut rest: Vec<&eon_stream_core::WatchEntry> = session.history.entries().collect();
+            rest.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
+            missing.extend(rest.into_iter().map(crate::art::title_of));
+            missing.extend(
+                session
+                    .library
+                    .list(eon_stream_core::LibraryOrder::Recent)
+                    .into_iter()
+                    .map(|e| (e.content_type.clone(), e.id.clone())),
+            );
+            let mut asked = std::collections::HashSet::new();
+            missing.retain(|(_, id)| session.art.get(id).is_none() && asked.insert(id.clone()));
+            missing.truncate(24);
+            Ok((view::Net::of(session), missing))
+        },
+        |(net, missing)| {
+            missing
+                .iter()
+                .map(|(content_type, id)| (id.clone(), view::fetch_meta(net, content_type, id).0))
+                .collect::<Vec<_>>()
+        },
+        |session, _, found| {
+            let mut filled = 0;
+            for (id, meta) in found {
+                if let Some(meta) = meta {
+                    session.art.put(&id, crate::art::Look::of(&meta));
+                    filled += 1;
+                }
+            }
+            if filled > 0 {
+                let profile = session.profiles.current.clone();
+                session.art.save(&profile);
+            }
+            Ok(filled)
+        },
+    )
+    .await
+}
+
+/// One page of "Recommended for you": ranked on this computer from what
+/// this profile watched, scored and saved. `fresh` starts the feed again.
+#[tauri::command]
+pub async fn recommend(
+    state: State<'_, Shared>,
+    page: usize,
+    fresh: bool,
+) -> Out<crate::recommend::FeedPage> {
+    with_network(
+        &state,
+        move |session| Ok(crate::recommend::request(session, page, fresh)),
+        crate::recommend::fetch,
+        move |session, _, feed| Ok(crate::recommend::view(session, feed, page)),
+    )
     .await
 }
 
@@ -2035,6 +2278,15 @@ fn launch(
     match MpvPlayer::launch(&source, &options) {
         Ok(started) => {
             session.player = Some(started);
+            // What it looks like, for the continue-watching card.
+            if let (Some(now), Some(meta)) = (playing.as_ref(), session.meta.clone()) {
+                let title = now.series_id.clone().unwrap_or_else(|| now.id.clone());
+                if meta.id == title {
+                    session.art.put(&title, crate::art::Look::of(&meta));
+                    let profile = session.profiles.current.clone();
+                    session.art.save(&profile);
+                }
+            }
             session.playing = playing;
             session.playing_torrent = search
                 .torrent

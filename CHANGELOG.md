@@ -15,41 +15,99 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
-## [v0.3] — 2026-11-18 — everyone on the computer, from the first minute
+## [v0.3] — 2026-11-18 — everyone on the computer, and a database of their own
 
-The thirtieth alpha, and the largest step since the window arrived: the program now knows
-who is watching, greets someone opening it for the first time, and is reorganised around
-that. It also closes a line of twelve releases (`v0.18`–`v0.29`) that took the window from
-"plays a torrent" to most of what a streaming service does — see those entries below.
+The thirtieth alpha, and the largest step since the window arrived. It was published once
+earlier the same day with profiles and the first-run setup, and rebuilt under the same tag
+before anyone was told about it, with everything below. It also closes a line of twelve
+releases (`v0.18`–`v0.29`) that took the window from "plays a torrent" to most of what a
+streaming service does — see those entries below.
 
 ### Added
 - **Profiles — "Who is watching?"** Up to eight people on one computer, each with their
   own continue watching, library, scores and the rows built from them. A profile is local
-  and is not an account (madde 7): no password, nothing sent anywhere. What belongs to the
-  computer stays shared — addons, settings, the cache, downloads. The first profile keeps
-  its files where they always were, so a library from before this release is simply its
-  library; others live in `eon-profiles/<id>/`. With more than one profile the program
-  opens on the picker; the avatar in the top bar switches, and profiles can be renamed,
-  recoloured and deleted (the first and the current one cannot be).
-- **A first-run setup**, four short steps: a name for your profile; the interface language
-  and the subtitle language to switch on; how much disk streaming may use, offering only
-  what the disk has; and what an addon is — since EON Stream comes with no content of its
-  own (madde 9) — with a box to add the first one. Skippable, shown once. A copy from
-  before this release, which already has addons, skips it.
-- **Rows of the genres you score highest** on the home screen: the first addon catalogue
-  that can be narrowed to each of a profile's two highest-scored genres, narrowed to it,
-  labelled for what it is ("Because you score Drama high"). The addon's catalogue — this
-  program judges nothing "for you".
+  and is not an account (madde 7): nothing is sent anywhere. What belongs to the computer
+  stays shared — addons, settings, the cache, downloads. The first profile keeps its files
+  where they always were, so a library from before this release is simply its library;
+  others live in `eon-profiles/<id>/`. With more than one profile the program opens on the
+  picker; profiles can be renamed, recoloured and deleted (the first and the current one
+  cannot be).
+- **A child's profile, and PIN locks.** A profile marked as a child's sees only what
+  catalogues file under family and animation — in its rows, its recommendations and its
+  search — and profiles cannot be changed from it. Any profile can be locked with a
+  four-digit PIN, asked for when it is opened, including at start when it was the last one
+  in use. The PIN is kept as a hash in `eon-pins.json` and never reaches the interface: a
+  household lock, as on a streaming service, not a password.
+- **A first-run setup**, five short steps: a name for your profile; the interface language
+  and the subtitle language; how the window opens (windowed full screen unless you choose
+  full screen or a small, medium or large window — also in Settings, applied at once); how
+  much disk streaming may use, offering only what the disk has; and what an addon is —
+  since EON Stream comes with no content of its own (madde 9) — with a box to add the first
+  one. Skippable, shown once.
+- **Recommended for you, worked out on this computer** (`recommend.rs`). A taste is read
+  from what the profile did — how long it watched each title and how far it got, what it
+  scored (a 9 pulls harder than an hour of watching), what it saved, what it gave up on
+  after ten minutes — and each title's genres, year and type. Candidates are the addons'
+  own catalogues, plus the genres the profile likes most read on their own; they are
+  ranked by genre affinity, the catalogue's IMDb score, how high the catalogue placed
+  them, era and the films-or-series balance, then re-ranked for variety so one genre does
+  not fill the page. Nothing about this leaves the device. Signed in to a community, "people
+  who liked what you liked" from its scores is added as a boost — the server sees only the
+  scores you chose to share.
+- **A home screen that goes on**: after continue watching and new episodes, a "Recommended
+  for you" row; the rows of the genres you score highest; the catalogues; a row of titles
+  made in your preferred audio language ("Türkçe yapımlar"), from the countries and
+  languages catalogues give; a row for every genre the catalogues offer, the ones you like
+  first; and then "More for you", a feed that keeps loading as you scroll, from the most to
+  the least recommended, for as long as the catalogues have pages.
+- **Search in pages of forty-two**, numbered, as a search engine shows them. Every
+  searchable catalogue keeps a cursor, and a page is read from the addons only when it is
+  opened; an addon that ignores `skip` is noticed rather than repeated.
+- **The community, complete — a film database run by the people who use it** (dormant
+  until you enter a server; see `eon-stream-spec/docs/community-api.md` and the new
+  `eon-stream-community` reference server). On a title's page: the score and its spread,
+  reviews ordered by helpfulness with helpful votes, spoiler-covered text, trivia, goofs,
+  quotes, soundtracks, filming locations and ten more kinds of fact with interest votes, a
+  parental guide voted in five categories, "more like this" from the scores, awards, the
+  lists it is on, and "Add to a list". Pages for actors and directors with their
+  filmographies, awards and facts — a cast name opens one. Top 250, trending and lowest
+  rated charts, by type and genre; lists and a watchlist, ranked or not, public or private,
+  liked; awards by event and year; polls; friends, a friends' feed, blocking; notifications
+  with a count on the side menu; an account page with a bio, password change, export and
+  deletion; reporting with a reason; appeals; and, for moderators, the queue, decisions with
+  notes and the log. Facts, people's details, awards and polls are shown once a moderator
+  approves them.
+- **Skip intro.** With a community set, the player offers "Skip intro" (and recap, credits,
+  preview) where people marked one, and a signed-in viewer can mark an episode's intro with
+  two presses for the next person.
+- **Play a file by dropping it on the window**, as in a desktop player. Its path stays in
+  the host, and nothing is written to history.
+- **Continue watching shows what you were watching**: the poster, and the title alone —
+  where you got to is the episode badge and the line under the card. A title's look is
+  remembered when it plays (`eon-art.json`, per profile); cards from before are filled in
+  once from the addons.
 - **The billboard turns** through the first five titles of the first catalogue, one every
-  twelve seconds, with dots to pick one — never while it is pointed at or focused, never on
-  another page or a hidden window, and not at all for someone who asked for reduced motion.
-  Each backdrop is asked for once.
+  twelve seconds, with dots — never while pointed at or focused, on another page or a
+  hidden window, or for someone who asked for reduced motion.
 
 ### Changed
-- **The top bar is the catalogue, the avatar is you.** Home, series, films, new & popular,
-  discover and the library stay in the bar; your profile, the calendar, downloads, the
-  community, addons and settings are in the avatar's menu, with switching profile. The
-  calendar's count of series with something new rides on the avatar.
+- **A side menu, as on a video site.** The top bar holds only the menu button, the name
+  (home), search — always open, in the middle — and the avatar. Where to go is in the side
+  menu, with an icon and a word for each: the catalogue's places, then yours (profile,
+  calendar, downloads, community), then the program's (addons, settings). The menu folds to
+  icons and remembers how you left it; a narrow window starts folded.
+- **No repeated rows.** Two catalogues with the same name and type appear once, and two
+  with the same name for different types say which they are ("Movies: Popular").
+
+### Fixed
+- **The white rectangle in the player.** Until its page drew, the player's layer showed
+  WebView2's default white over mpv's picture, the size of the layer as first made. Both
+  webviews now start with a background of their own — transparent for the player, the
+  interface's ink for the window — so the first load stays black until the picture comes.
+
+### Contracts
+- Catalogue entries now carry `genres`, `country` and `language` when the addon sends
+  them, read leniently: an odd shape is no genres, never a lost row (core).
 
 ## [v0.29] — 2026-11-18 — downloads, to watch without a connection
 

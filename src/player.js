@@ -167,6 +167,83 @@ function flash(name) {
   node.classList.add("go");
 }
 
+// ------------------------------------------------------------ skip markers
+
+/** Skip markers from a community server, when one is set: "Skip intro"
+ *  while the intro plays, and -- signed in, on an episode -- two presses to
+ *  mark where an intro starts and ends, for the next person. Through the
+ *  host like every community request; nothing about the viewing is sent,
+ *  only, when they choose, where an intro is. */
+const SKIPS = { key: null, segments: [], community: null, markStart: null };
+
+async function skipMarkers(player) {
+  const item = player.item;
+  const key = item ? `${item[0]}/${item[1]}` : null;
+  if (key !== SKIPS.key) {
+    SKIPS.key = key;
+    SKIPS.segments = [];
+    SKIPS.markStart = null;
+    if (key) {
+      try {
+        SKIPS.community = await invoke("community_state");
+        if (SKIPS.community.server) {
+          const answer = await invoke("community_request", { method: "GET", path: `/v0/segments/${encodeURIComponent(item[0])}/${encodeURIComponent(item[1])}`, body: null });
+          if (answer.status === 200 && SKIPS.key === key) SKIPS.segments = answer.body.segments || [];
+        }
+      } catch (error) {
+        SKIPS.segments = [];
+      }
+    }
+  }
+  const at = player.position;
+  const skip = $("skip");
+  const now = at === null || at === undefined ? null : SKIPS.segments.find((s) => at >= s.start && at < s.end - 1);
+  if (now) {
+    const text = t(`ui.player.skip${now.kind}`);
+    if (skip.textContent !== text) skip.textContent = text;
+    skip.dataset.to = String(now.end);
+  }
+  if (skip.hidden !== !now) skip.hidden = !now;
+  // Marking: only an episode, only signed in, only where no intro is known.
+  const mark = $("mark");
+  const canMark = Boolean(item && item[1].includes(":") && SKIPS.community && SKIPS.community.username && !SKIPS.segments.some((s) => s.kind === "intro") && at !== null && at < 900);
+  if (mark.hidden !== !canMark) mark.hidden = !canMark;
+  if (canMark) {
+    const text = SKIPS.markStart === null ? t("ui.player.markstart") : t("ui.player.markend");
+    if (mark.textContent !== text) mark.textContent = text;
+  }
+}
+
+function initSkips() {
+  $("skip").addEventListener("click", () => {
+    const to = Number($("skip").dataset.to);
+    if (Number.isFinite(to)) invoke("player", { action: "seek-to", value: to }).catch(() => {});
+    $("skip").hidden = true;
+  });
+  $("mark").addEventListener("click", async () => {
+    const at = STATE && STATE.position;
+    if (at === null || at === undefined) return;
+    if (SKIPS.markStart === null) {
+      SKIPS.markStart = at;
+      return;
+    }
+    const [kind, id] = STATE.item;
+    const body = { kind: "intro", start: SKIPS.markStart, end: at, duration: STATE.duration || at + 1 };
+    SKIPS.markStart = null;
+    try {
+      const answer = await invoke("community_request", { method: "POST", path: `/v0/segments/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, body });
+      if (answer.status === 201) {
+        SKIPS.segments.push({ kind: "intro", start: body.start, end: body.end, score: 1 });
+        const note = $("note");
+        note.textContent = t("ui.player.marked");
+        note.hidden = false;
+      }
+    } catch (error) {
+      // Not marked; nothing else changes.
+    }
+  });
+}
+
 // --------------------------------------------------------------------- state
 
 async function poll() {
@@ -194,6 +271,7 @@ async function poll() {
     }, 9000);
   }
   if (!player.running) return; // The host is taking this page down.
+  skipMarkers(player);
 
   put($("title"), player.title || "");
   if (document.title !== (player.title || "EON Stream")) document.title = player.title || "EON Stream";
@@ -741,6 +819,7 @@ async function boot() {
     }
   });
   $("next").addEventListener("click", playNext);
+  initSkips();
   for (const button of document.querySelectorAll("[data-tune]")) {
     button.addEventListener("click", () => nudge(button.dataset.tune, Number(button.dataset.by)));
   }

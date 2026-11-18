@@ -745,3 +745,36 @@ body.sleep .top .control {
 .abandon.faster:focus-visible {
   background: #fff;
 }
+
+/* ------------------------------------------------------------ skip markers */
+
+.skips {
+  position: fixed;
+  right: clamp(18px, 3vw, 44px);
+  bottom: 130px;
+  z-index: 5;
+  display: flex;
+  gap: 10px;
+}
+
+.skip {
+  min-height: 44px;
+  padding: 0 22px;
+  border-radius: 8px;
+  font-weight: 700;
+  color: #0a0c12;
+  background: #f4f6fb;
+  border: 1px solid #f4f6fb;
+}
+
+.skip.quiet {
+  color: var(--text, #f4f6fb);
+  background: rgba(10, 12, 18, 0.72);
+  border-color: rgba(255, 255, 255, 0.35);
+  font-weight: 600;
+}
+
+.skip:focus-visible {
+  outline: 2px solid #7fd8ff;
+  outline-offset: 2px;
+}

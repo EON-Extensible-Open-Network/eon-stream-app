@@ -35,6 +35,61 @@ pub struct Profile {
     pub name: String,
     /// Which of the avatar colours, 0 to 5.
     pub color: u8,
+    /// A child's profile: only titles a catalogue files under family and
+    /// animation, in rows, the feed and search alike.
+    #[serde(default)]
+    pub kids: bool,
+    /// Whether opening it asks for a PIN. The PIN itself is in
+    /// `eon-pins.json`, as a hash, and never reaches the interface.
+    #[serde(default)]
+    pub locked: bool,
+}
+
+const PINS: &str = "eon-pins.json";
+
+/// A profile's PIN, as stored. A household lock, like a streaming service's
+/// profile PIN: it keeps a child out of a parent's profile, not a person
+/// with the computer's files out of anything.
+fn pin_hash(profile: &str, pin: &str) -> String {
+    eon_stream_core::signature::content_hash(format!("eon-profile-pin:{profile}:{pin}").as_bytes())
+}
+
+fn pins() -> std::collections::HashMap<String, String> {
+    std::fs::read_to_string(beside_exe(PINS))
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+/// Whether a PIN opens a profile. A profile without one opens with anything.
+#[must_use]
+pub fn pin_opens(profile: &str, pin: Option<&str>) -> bool {
+    match pins().get(profile) {
+        None => true,
+        Some(stored) => pin.is_some_and(|pin| pin_hash(profile, pin) == *stored),
+    }
+}
+
+/// Set a profile's PIN, or clear it with `None`.
+///
+/// # Errors
+///
+/// As a message key: a PIN that is not four digits.
+pub fn set_pin(profile: &str, pin: Option<&str>) -> Result<(), &'static str> {
+    let mut all = pins();
+    match pin {
+        Some(pin) if pin.len() == 4 && pin.chars().all(|c| c.is_ascii_digit()) => {
+            all.insert(profile.to_owned(), pin_hash(profile, pin));
+        }
+        Some(_) => return Err("ui.profiles.pinform"),
+        None => {
+            all.remove(profile);
+        }
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&all) {
+        let _ = std::fs::write(beside_exe(PINS), json);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -44,7 +99,19 @@ pub struct Profiles {
     /// Whether the first-run setup was finished or skipped.
     #[serde(default)]
     pub onboarded: bool,
+    /// How the window opens: `fullscreen`, `maximized` (the default:
+    /// windowed full screen), `small`, `medium` or `large`. The computer's,
+    /// not a profile's.
+    #[serde(default = "default_window")]
+    pub window: String,
 }
+
+fn default_window() -> String {
+    "maximized".to_owned()
+}
+
+/// The window modes there are.
+pub const WINDOW_MODES: &[&str] = &["fullscreen", "maximized", "large", "medium", "small"];
 
 impl Default for Profiles {
     fn default() -> Self {
@@ -53,9 +120,12 @@ impl Default for Profiles {
                 id: MAIN.to_owned(),
                 name: String::new(),
                 color: 0,
+                kids: false,
+                locked: false,
             }],
             current: MAIN.to_owned(),
             onboarded: false,
+            window: default_window(),
         }
     }
 }
@@ -122,6 +192,8 @@ impl Profiles {
             id,
             name: name.to_owned(),
             color: color % 6,
+            kids: false,
+            locked: false,
         };
         self.profiles.push(profile.clone());
         self.save();
@@ -164,6 +236,25 @@ impl Profiles {
     }
 }
 
+impl Profiles {
+    /// Whether the profile in use is a child's.
+    #[must_use]
+    pub fn kids(&self) -> bool {
+        self.profiles.iter().any(|p| p.id == self.current && p.kids)
+    }
+}
+
+/// The genres a child's profile is shown.
+pub const KIDS_GENRES: &[&str] = &["animation", "family", "kids", "children"];
+
+/// Whether a title's genres make it a child's.
+#[must_use]
+pub fn for_kids(genres: &[String]) -> bool {
+    genres
+        .iter()
+        .any(|g| KIDS_GENRES.contains(&g.to_lowercase().as_str()))
+}
+
 /// Where a profile keeps one of its files.
 #[must_use]
 pub fn file(profile: &str, name: &str) -> PathBuf {
@@ -186,9 +277,12 @@ mod tests {
                 id: MAIN.into(),
                 name: "Sadık".into(),
                 color: 0,
+                kids: false,
+                locked: false,
             }],
             current: MAIN.into(),
             onboarded: true,
+            window: default_window(),
         };
         // Saving writes beside the test binary; harmless.
         let a = profiles.add("Ayşe", 1).expect("added");

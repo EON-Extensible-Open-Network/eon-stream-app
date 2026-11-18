@@ -33,6 +33,9 @@ pub struct Community {
     #[serde(default)]
     token: Option<String>,
     pub username: Option<String>,
+    /// `user`, `moderator` or `admin`, as the server said at sign-in.
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 /// What the interface may know: whether there is a server, and who is
@@ -41,6 +44,7 @@ pub struct Community {
 pub struct CommunityView {
     pub server: Option<String>,
     pub username: Option<String>,
+    pub role: Option<String>,
 }
 
 impl Community {
@@ -62,6 +66,7 @@ impl Community {
         CommunityView {
             server: self.server.clone(),
             username: self.username.clone(),
+            role: self.role.clone(),
         }
     }
 
@@ -87,19 +92,22 @@ impl Community {
         self.server = Some(address.to_owned());
         self.token = None;
         self.username = None;
+        self.role = None;
         self.save();
         Ok(())
     }
 
-    pub fn signed_in(&mut self, token: String, username: String) {
+    pub fn signed_in(&mut self, token: String, username: String, role: Option<String>) {
         self.token = Some(token);
         self.username = Some(username);
+        self.role = role;
         self.save();
     }
 
     pub fn signed_out(&mut self) {
         self.token = None;
         self.username = None;
+        self.role = None;
         self.save();
     }
 }
@@ -136,15 +144,49 @@ fn allowed(method: &str, path: &str) -> bool {
         (method, &parts[1..]),
         ("POST", ["accounts"])
             | ("POST" | "DELETE", ["sessions"])
-            | ("GET" | "DELETE", ["me"])
-            | ("GET", ["me", "export"])
+            | ("GET" | "PUT" | "DELETE", ["me"])
+            | ("PUT", ["me", "password"])
+            | ("GET", ["me", "export" | "recommendations" | "watchlist"])
+            | ("GET" | "POST", ["me", "notifications"])
             | ("PUT" | "DELETE", ["ratings", _, _])
             | ("GET", ["titles", _, _])
-            | ("GET", ["top", _])
+            | (
+                "GET",
+                [
+                    "titles",
+                    _,
+                    _,
+                    "reviews" | "similar" | "parental" | "awards" | "lists"
+                ]
+            )
+            | ("GET" | "POST", ["titles", _, _, "facts"])
+            | ("PUT", ["titles", _, _, "parental", _])
+            | ("PUT" | "DELETE", ["reviews", _, _, _, "helpful"])
+            | ("GET", ["top" | "bottom" | "trending", _])
+            | ("PUT" | "DELETE", ["facts", _, "vote"])
+            | ("DELETE", ["facts", _])
+            | ("GET" | "POST", ["segments", _, _])
+            | ("PUT", ["segments", _, "vote"])
+            | ("GET", ["people"] | ["people", _])
+            | ("GET" | "POST", ["people", _, "facts"])
+            | ("POST", ["people", _, "edits"])
+            | ("GET" | "POST", ["lists"])
+            | ("GET" | "PUT" | "DELETE", ["lists", _])
+            | ("PUT" | "DELETE", ["lists", _, "items", _, _])
+            | ("PUT" | "DELETE", ["lists", _, "like"])
+            | ("GET", ["awards"])
+            | ("GET" | "POST", ["awards", _, _])
+            | ("GET" | "POST", ["polls"])
+            | ("GET", ["polls", _])
+            | ("PUT", ["polls", _, "vote"])
             | ("GET", ["users"] | ["users", _])
             | ("GET", ["friends"] | ["feed"])
             | ("POST" | "DELETE", ["friends", _])
-            | ("POST", ["reports"])
+            | ("PUT" | "DELETE", ["blocks", _])
+            | ("POST", ["reports"] | ["appeals"])
+            | ("GET", ["mod", "queue" | "log"])
+            | ("POST", ["mod", "queue", _])
+            | ("PUT", ["mod", "users" | "roles", _])
     )
 }
 
@@ -249,6 +291,17 @@ mod tests {
         assert!(!allowed("GET", "/v0/../etc/passwd"));
         assert!(!allowed("GET", "/v1/users"));
         assert!(!allowed("GET", "/v0/users/a/b"));
+        assert!(allowed(
+            "GET",
+            "/v0/titles/series/tt0903747/facts?kind=trivia"
+        ));
+        assert!(allowed("PUT", "/v0/titles/movie/tt1/parental/violence"));
+        assert!(allowed("GET", "/v0/segments/series/tt0903747:1:1"));
+        assert!(allowed("PUT", "/v0/lists/12/items/movie/tt1"));
+        assert!(allowed("POST", "/v0/mod/queue/fact-3"));
+        assert!(allowed("GET", "/v0/people/bryan-cranston"));
+        assert!(!allowed("POST", "/v0/mod/log"));
+        assert!(!allowed("DELETE", "/v0/lists/1/items/movie"));
     }
 
     #[test]
