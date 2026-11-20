@@ -98,8 +98,11 @@ suite green. Turkish and English, meeting a baseline accessibility bar (madde 35
 
 What is left between here and `v1`: the installer and the signing keys.
 
-**Not in v1:** marketplace, accounts, creator tools, material packages, music, mobile,
+**Not in v1:** marketplace, accounts, creator tools, material packages, mobile,
 code-executing plugins, Edu.
+
+Files and music are not EON Stream modules any more: each is its own EON product with its
+own repositories (plan madde 45) — files are [EON Download Manager](https://github.com/EON-Extensible-Open-Network/eon-download-manager-app).
 
 ## Non-negotiables in this repo
 
