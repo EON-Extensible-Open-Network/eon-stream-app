@@ -2590,3 +2590,54 @@ pub async fn account_delete(state: State<'_, Shared>) -> Out<crate::account::Acc
     })
     .await
 }
+
+/// Signs in to the community server with this profile's EON Account: an
+/// assertion addressed to that server, which learns a pseudonym of its own
+/// and the username -- never the password or the account's session.
+#[tauri::command]
+pub async fn community_with_account(
+    state: State<'_, Shared>,
+) -> Out<crate::community::CommunityView> {
+    let shared = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let lost = || "the host lost track of its own state".to_owned();
+        let (profile, server) = {
+            let session = shared.lock().map_err(|_| lost())?;
+            let server = session
+                .community
+                .server
+                .clone()
+                .ok_or_else(|| session.text("ui.community.noserver"))?;
+            (session.profiles.current.clone(), server)
+        };
+        // The server's origin: scheme, host and port, nothing after.
+        let origin = server
+            .split_once("://")
+            .map(|(scheme, rest)| format!("{scheme}://{}", rest.split('/').next().unwrap_or("")))
+            .unwrap_or_default()
+            .to_lowercase();
+        let account = eon_account_client::Account::open(&crate::account::dir(&profile));
+        let assertion = account.assertion(&origin, true).map_err(|e| {
+            shared.lock().map_or_else(
+                |_| e.to_string(),
+                |session| account_error(&|k| session.text(k), &e),
+            )
+        })?;
+        let answer = ureq::post(&format!("{server}/v0/sessions/account"))
+            .timeout(std::time::Duration::from_secs(20))
+            .send_json(serde_json::json!({ "assertion": assertion }));
+        let mut session = shared.lock().map_err(|_| lost())?;
+        let body: serde_json::Value = match answer {
+            Ok(response) => response.into_json().map_err(|e| e.to_string())?,
+            Err(ureq::Error::Status(403, _)) => return Err(session.text("ui.community.noaccount")),
+            Err(_) => return Err(session.text("ui.account.error.unauthorised")),
+        };
+        let text = |k: &str| body.get(k).and_then(|v| v.as_str()).map(ToOwned::to_owned);
+        if let (Some(token), Some(username)) = (text("token"), text("username")) {
+            session.community.signed_in(token, username, text("role"));
+        }
+        Ok(session.community.view())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

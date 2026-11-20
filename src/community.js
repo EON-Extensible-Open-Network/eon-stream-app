@@ -288,6 +288,28 @@ async function openCommunity(tab = "feed") {
 }
 
 function drawSignIn(body) {
+  // Signed in to EON Account: one press, and the community gets a pseudonym
+  // of its own and the username -- not the password (madde 46).
+  if (typeof ACCOUNT !== "undefined" && ACCOUNT.username) {
+    const go = el("button", { className: "button play", attrs: { type: "button" }, text: t("ui.community.withaccount", ACCOUNT.username) });
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      try {
+        await ask("community_with_account");
+        await openCommunity();
+        refreshBadge();
+      } catch (error) {
+        go.disabled = false;
+      }
+    });
+    body.appendChild(
+      el("div", { className: "card-panel auth-form community-account" }, [
+        el("h3", { text: t("ui.account.section") }),
+        el("p", { className: "note", text: t("ui.community.withaccounttext") }),
+        go,
+      ])
+    );
+  }
   const forms = el("div", { className: "auth" });
   const [loginField, login] = field(t("ui.community.login"), { autocomplete: "username" });
   const [passField, pass] = field(t("ui.community.password"), { type: "password", autocomplete: "current-password" });

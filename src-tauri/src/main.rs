@@ -196,6 +196,7 @@ fn window(play: Option<String>) {
             commands::account_me,
             commands::account_delete,
             commands::community_state,
+            commands::community_with_account,
             commands::community_server,
             commands::community_request,
             commands::more_like,

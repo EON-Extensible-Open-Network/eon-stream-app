@@ -2552,6 +2552,16 @@ button.pill:focus-visible {
   padding: 2px 0;
 }
 
+.community-account {
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+}
+
+.community-account .note {
+  border-top: none;
+  padding: 0;
+}
+
 .account-who {
   margin: 0;
   font-size: 17px;

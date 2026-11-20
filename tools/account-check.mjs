@@ -10,7 +10,9 @@
 // field, and the recovery key sets a new password. The executable is copied to
 // a fresh folder first, because EON Stream keeps everything beside itself.
 //
-//   node tools/account-check.mjs <debug eon-stream.exe> <eon-account-server.exe> <screenshots dir>
+//   node tools/account-check.mjs <debug eon-stream.exe> <eon-account-server.exe> <screenshots dir> [eon-community.exe]
+//
+// With the community server, the window also signs in to it with EON Account.
 //
 // The window is driven over the Chrome DevTools protocol, which a debug build
 // opens when EON_WEBVIEW_ARGS asks; the release build ignores it.
@@ -19,7 +21,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const [streamExe, serverExe, shots] = process.argv.slice(2);
+const [streamExe, serverExe, shots, communityExe] = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const root = mkdtempSync(join(tmpdir(), "eon-stream-account-"));
 mkdirSync(join(root, "app"));
@@ -30,6 +32,7 @@ const apiPort = 8800 + Math.floor(Math.random() * 100);
 const api = `http://127.0.0.1:${apiPort}`;
 
 const server = spawn(serverExe, ["--data", join(root, "server"), "--listen", `127.0.0.1:${apiPort}`, "--outbox", join(root, "outbox")], { stdio: "ignore" });
+let community = null;
 const app = spawn(join(root, "app", "eon-stream.exe"), [], { env: { ...process.env, EON_WEBVIEW_ARGS: `--remote-debugging-port=${port}` }, stdio: "ignore" });
 
 let failures = 0;
@@ -149,12 +152,30 @@ try {
   await click(".account button[type=submit]");
   check("the recovery key sets a new password (in Turkish)", await until(`document.getElementById('welcome').hidden`, 20000));
   check("and the account is signed in again", await js(`(async () => (await invoke('account_state')).username === 'deniz')()`));
+
+  if (communityExe) {
+    // A community server that trusts this account server's key, given on its
+    // command line -- it asks nothing of the account server itself.
+    const keys = await (await fetch(`${api}/v0/keys`)).json();
+    const k = keys.keys[0];
+    const cPort = apiPort + 100;
+    const origin = `http://127.0.0.1:${cPort}`;
+    community = spawn(communityExe, ["serve", "--listen", `127.0.0.1:${cPort}`, "--db", join(root, "community.sqlite"), "--origin", origin, "--trust-account", `${keys.issuer},${k.kid},${k.public}`], { stdio: "ignore" });
+    await sleep(800);
+    await js(`(async () => { await invoke('community_server', { address: ${JSON.stringify(origin)} }); })()`);
+    await js(`go('community')`);
+    check("the community offers EON Account to a signed-in viewer", await until(`[...document.querySelectorAll('button')].some((b) => b.textContent === t('ui.community.withaccount', 'deniz'))`));
+    await shot("07-community-tr");
+    await clickText(await js(`t('ui.community.withaccount', 'deniz')`));
+    check("one press signs in to the community, under the EON name", await until(`(async () => (await invoke('community_state')).username === 'deniz')()`, 20000));
+  }
 } catch (error) {
   console.error(error);
   failures++;
 } finally {
   app.kill();
   server.kill();
+  if (community) community.kill();
   await sleep(500);
   try { rmSync(root, { recursive: true, force: true }); } catch { /* the webview may hold files a moment longer */ }
 }

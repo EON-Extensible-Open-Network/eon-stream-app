@@ -15,6 +15,20 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.32] — 2026-11-20 — the community with EON Account
+
+### Added
+- **Continue with EON Account on the community.** A viewer signed in to EON Account
+  joins a community server with one press. The window asks the account server for a
+  five-minute assertion addressed to that community server and hands it over. The
+  community server learns the EON username and a pseudonym that no other service shares;
+  it never sees the password or the account's session. Community API v0.1 and
+  [eon-stream-community](https://github.com/EON-Extensible-Open-Network/eon-stream-community)
+  0.2.0 accept it from account servers whose key the operator has given them. A server
+  that accepts no EON Account says so, and its own sign-in still works.
+- `tools/account-check.mjs` takes an optional community server and checks this in the
+  real window.
+
 ## [v0.31] — 2026-11-20 — one account, and progress that follows you
 
 The thirty-first alpha. EON Stream can now sign in to **EON Account**, the one account
@@ -55,8 +69,6 @@ for all of EON (plan madde 46). Being a guest is still a full answer (madde 7).
 ### Not yet
 - **No account server is run by the project** (madde 30): the address starts empty and
   the sheet says so.
-- **The community still uses its own sign-in.** Moving it to EON Account assertions is the
-  next step.
 - **Reset by e-mail exists in the account API but not yet in this window.**
 
 ## [v0.3] — 2026-11-18 — everyone on the computer, and a database of their own
