@@ -2341,6 +2341,273 @@ button.pill:focus-visible {
   background: var(--accent);
 }
 
+/* ------------------------------------------------------------- EON Account */
+
+/* The account sheet sits in the welcome layer and speaks its language: the
+   same title, the same lede, the same buttons. One thing is allowed to stand
+   out, and it is the recovery key -- the only screen where losing what is
+   shown loses something for good. */
+
+.account {
+  display: grid;
+  gap: 16px;
+  color-scheme: dark;
+}
+
+.account > .text-button {
+  justify-self: start;
+}
+
+.account-confirm {
+  display: grid;
+  gap: 14px;
+  margin-top: 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  color-scheme: dark;
+}
+
+.account-tabs {
+  display: inline-flex;
+  justify-self: start;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.account-tab {
+  min-height: 40px;
+  padding: 0 18px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-weight: 600;
+  transition: background 160ms var(--ease), color 160ms var(--ease);
+}
+
+.account-tab:hover {
+  color: var(--text);
+}
+
+.account-tab[aria-pressed="true"] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.account .field-label {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.account input,
+.account-panel input {
+  min-height: 44px;
+  width: 100%;
+  padding: 0 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.account input:focus-visible,
+.account-panel input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.account input[aria-invalid="true"],
+.account-panel input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.field-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-toggle {
+  flex: none;
+  min-width: 64px;
+}
+
+.field-hint {
+  margin: 0;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.field-hint:empty,
+.field-error:empty {
+  display: none;
+}
+
+.field-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 14px;
+}
+
+.account-server {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.account-server .field-label {
+  color: var(--muted);
+}
+
+.account-server summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+.account-server summary:hover {
+  color: var(--text);
+}
+
+.account-server[open] summary {
+  margin-bottom: 10px;
+}
+
+.account-seal {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.account-seal .icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+/* The recovery key: eight groups of four, large, in a face where 0 and O,
+   1 and I cannot be confused -- base32 has no 0, 1 or 8, but the person
+   copying it down does not know that. */
+.recovery-key {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  justify-content: start;
+  gap: 10px 18px;
+  padding: 22px 26px;
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    var(--aurora) border-box;
+  border: 1px solid transparent;
+  font-family: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+  font-size: clamp(20px, 2.4vw, 28px);
+  letter-spacing: 0.08em;
+  color: var(--text);
+  user-select: all;
+}
+
+@media (max-width: 560px) {
+  .recovery-key {
+    grid-template-columns: repeat(2, auto);
+  }
+}
+
+.account-kept {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.account-kept input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.account-panel {
+  padding-bottom: 18px;
+  color-scheme: dark;
+}
+
+.account-panel .loading-actions {
+  margin-top: 4px;
+}
+
+.account-panel .note,
+.keeps .note {
+  border-top: none;
+  padding: 2px 0;
+}
+
+.account-who {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.account-email {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.account-email h4,
+.keeps h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.keeps {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.keeps-item {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.keeps-item p {
+  margin: 0;
+}
+
+.keeps-what {
+  color: var(--text);
+}
+
+.keeps-list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-tab {
+    transition: none;
+  }
+}
+
 /* ---------------------------------------------------------------- downloads */
 
 .source-line {

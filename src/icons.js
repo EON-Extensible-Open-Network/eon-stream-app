@@ -130,6 +130,11 @@ const ICONS = {
     ["path", { d: "M15.5 8.5l-2 5-5 2 2-5z" }],
   ],
   bookmark: [["path", { d: "M6.5 3.5h11v17L12 16.5l-5.5 4z" }]],
+  // A padlock: what is sealed on this computer before it leaves.
+  lock: [
+    ["rect", { x: 5, y: 10.5, width: 14, height: 10, rx: 2 }],
+    ["path", { d: "M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3" }],
+  ],
 };
 
 /** An icon as an SVG element, optionally with a number drawn inside it. */

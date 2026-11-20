@@ -28,7 +28,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["unstable"] }
 # Decisions, protocol, signatures, settings, i18n. No GUI dependency reaches
 # the other side of this line (madde 32c).
-eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "c5045e628012c3759a0363f17db2b663635490bf" }
+eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "3b4a9193a08e9166f95864ced849de8a134d7d44" }
 # Torrents, the loopback server, and mpv over JSON IPC.
 eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "2c8c7ba90474cea6818e34e1760ba69d18a2062f" }
 # The IPC surface is typed on both sides; these serialise it. Already in the
@@ -38,6 +38,9 @@ serde_json = "1"
 # The HTTP client. Same crate the headless build uses, for the same reason:
 # the library pulls in no network stack, so the binary chooses one.
 ureq = "2"
+# EON Account (madde 46): OPAQUE sign-in and the vault sealed on this computer.
+# One account across EON, so the library is the account's own, pinned by commit.
+eon-account-client = { git = "https://github.com/EON-Extensible-Open-Network/eon-account-client", rev = "622b9af258cc4774a607a642d62092f179c52933" }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

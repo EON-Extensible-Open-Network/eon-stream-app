@@ -857,6 +857,385 @@ async function openWelcome() {
   draw();
 }
 
+// --------------------------------------------------------------- EON Account
+
+/** One account for all of EON (madde 46). The sheet uses the welcome layer:
+ *  sign in, create an account, or continue as a guest -- a full answer that
+ *  is never asked again by itself (madde 7). The password goes to the host
+ *  and from there nowhere: sign-in is OPAQUE. */
+let ACCOUNT = { server: null, username: null, prompted: true, last_sync: null, syncing: false };
+
+async function loadAccount() {
+  try {
+    ACCOUNT = await invoke("account_state");
+  } catch (error) {
+    // No account is a fine state to be in.
+  }
+  return ACCOUNT;
+}
+
+/** A labelled field with a hint and an error line, wired for screen readers. */
+function accountField(id, label, attrs, hint) {
+  const input = el("input", { attrs: { id, ...attrs, "aria-describedby": `${id}-hint ${id}-error` } });
+  const parts = [el("label", { className: "field-label", text: label, attrs: { for: id } })];
+  if (attrs.type === "password") {
+    const toggle = el("button", {
+      className: "text-button field-toggle",
+      attrs: { type: "button", "aria-pressed": "false", "aria-controls": id },
+      text: t("ui.account.show"),
+    });
+    toggle.addEventListener("click", () => {
+      const shown = input.type === "text";
+      input.type = shown ? "password" : "text";
+      toggle.textContent = shown ? t("ui.account.show") : t("ui.account.hide");
+      toggle.setAttribute("aria-pressed", String(!shown));
+    });
+    parts.push(el("div", { className: "field-row" }, [input, toggle]));
+  } else {
+    parts.push(input);
+  }
+  parts.push(el("p", { className: "field-hint", text: hint || "", attrs: { id: `${id}-hint` } }));
+  const error = el("p", { className: "field-error", attrs: { id: `${id}-error`, role: "alert" } });
+  parts.push(error);
+  // A complaint goes as soon as the person starts fixing what it was about.
+  input.addEventListener("input", () => {
+    error.textContent = "";
+    input.removeAttribute("aria-invalid");
+  });
+  return { node: el("div", { className: "field" }, parts), input };
+}
+
+/** The account sheet. `done` runs once the person has signed in, created an
+ *  account and kept its key, or chosen to stay a guest. */
+async function openAccount(done, mode = "signin") {
+  const layer = document.getElementById("welcome");
+  const body = document.getElementById("welcome-body");
+  await loadAccount();
+  const close = async () => {
+    try {
+      await invoke("account_prompted");
+    } catch (error) {
+      // Asking again next time is the worst that can happen.
+    }
+    layer.hidden = true;
+    await loadAccount();
+    if (done) await done();
+  };
+
+  const draw = () => {
+    clear(body);
+    if (mode === "key") return;
+    const form = el("form", { className: "account", attrs: { novalidate: "true" } });
+    const tabs = el("div", { className: "account-tabs", attrs: { role: "group", "aria-label": t("ui.account.title") } });
+    for (const [which, label] of [["signin", t("ui.account.signin")], ["create", t("ui.account.create")]]) {
+      tabs.appendChild(
+        el("button", {
+          className: "account-tab",
+          attrs: { type: "button", "aria-pressed": String(mode === which) },
+          text: label,
+          onClick: () => { mode = which; draw(); },
+        })
+      );
+    }
+    body.appendChild(el("h2", { className: "welcome-title", text: mode === "recover" ? t("ui.account.recover") : t("ui.account.title") }));
+    body.appendChild(el("p", { className: "lede", text: mode === "recover" ? t("ui.account.recovertext") : t("ui.account.lede") }));
+    if (mode !== "recover") form.appendChild(tabs);
+
+    const fields = {};
+    const add = (name, field) => { fields[name] = field; form.appendChild(field.node); };
+    if (mode === "signin") {
+      add("login", accountField("acc-login", t("ui.account.login"), { autocomplete: "username", spellcheck: "false", autocapitalize: "none" }));
+      add("password", accountField("acc-password", t("ui.account.password"), { type: "password", autocomplete: "current-password" }));
+    } else if (mode === "create") {
+      add("login", accountField("acc-login", t("ui.account.username"), { autocomplete: "username", spellcheck: "false", autocapitalize: "none", maxlength: "32" }, t("ui.account.usernamehint")));
+      add("password", accountField("acc-password", t("ui.account.password"), { type: "password", autocomplete: "new-password" }, t("ui.account.passwordhint")));
+    } else {
+      add("login", accountField("acc-login", t("ui.account.username"), { autocomplete: "username", spellcheck: "false", autocapitalize: "none" }));
+      add("key", accountField("acc-key", t("ui.account.recoverykey"), { autocomplete: "off", spellcheck: "false", autocapitalize: "characters" }));
+      add("password", accountField("acc-password", t("ui.account.newpassword"), { type: "password", autocomplete: "new-password" }, t("ui.account.passwordhint")));
+    }
+
+    // The server: empty until someone enters one, because EON runs none yet.
+    const server = accountField("acc-server", t("ui.account.server"), { type: "url", placeholder: "https://…", spellcheck: "false" }, ACCOUNT.server ? "" : t("ui.account.servernone"));
+    server.input.value = ACCOUNT.server || "";
+    // With no server yet, the field is simply there; once one is set, it
+    // folds away behind the address it points at.
+    const serverBox = ACCOUNT.server
+      ? el("details", { className: "account-server" }, [el("summary", { text: t("ui.account.serverat", ACCOUNT.server) }), server.node])
+      : el("div", { className: "account-server" }, [server.node]);
+    form.appendChild(serverBox);
+
+    const general = el("p", { className: "field-error", attrs: { role: "alert" } });
+    form.appendChild(general);
+    const primary = el("button", {
+      className: "button play",
+      attrs: { type: "submit" },
+      text: mode === "signin" ? t("ui.account.signin") : mode === "create" ? t("ui.account.create") : t("ui.account.recoverbutton"),
+    });
+    const actions = el("div", { className: "loading-actions" }, [primary]);
+    if (mode === "recover") {
+      actions.appendChild(el("button", { className: "button ghost", attrs: { type: "button" }, text: t("ui.account.backtosignin"), onClick: () => { mode = "signin"; draw(); } }));
+    } else {
+      actions.appendChild(el("button", { className: "button ghost", attrs: { type: "button" }, text: t("ui.account.guest"), onClick: close }));
+    }
+    form.appendChild(actions);
+    if (mode === "signin") {
+      form.appendChild(el("button", { className: "text-button quiet", attrs: { type: "button" }, text: t("ui.account.forgot"), onClick: () => { mode = "recover"; draw(); } }));
+    }
+    if (mode !== "recover") {
+      form.appendChild(el("p", { className: "account-seal" }, [icon("lock"), el("span", { text: t("ui.account.guestnote") })]));
+    }
+
+    const showError = (field, message) => {
+      for (const f of Object.values(fields)) {
+        f.node.querySelector(".field-error").textContent = "";
+        f.input.removeAttribute("aria-invalid");
+      }
+      server.node.querySelector(".field-error").textContent = "";
+      general.textContent = "";
+      if (!field) {
+        general.textContent = message;
+        return;
+      }
+      field.node.querySelector(".field-error").textContent = message;
+      field.input.setAttribute("aria-invalid", "true");
+      field.input.focus();
+    };
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const login = fields.login.input.value.trim();
+      const password = fields.password.input.value;
+      if (!login) return showError(fields.login, t("ui.account.error.invalid"));
+      if ([...password].length < 10) return showError(fields.password, t("ui.account.error.weak_password"));
+      primary.disabled = true;
+      const label = primary.textContent;
+      primary.textContent = t("ui.account.working");
+      try {
+        const address = server.input.value.trim();
+        if (address !== (ACCOUNT.server || "")) {
+          try {
+            ACCOUNT = await invoke("account_server", { address });
+          } catch (error) {
+            if ("open" in serverBox) serverBox.open = true;
+            showError(server, String(error));
+            return;
+          }
+        }
+        if (mode === "signin") {
+          await invoke("account_login", { login, password });
+          await close();
+        } else if (mode === "create") {
+          const key = await invoke("account_register", { username: login, password });
+          mode = "key";
+          showKey(key);
+        } else {
+          await invoke("account_recover", { username: login, key: fields.key.input.value, password });
+          await close();
+        }
+      } catch (error) {
+        const message = String(error);
+        if (message === t("ui.account.error.taken") || message === t("ui.account.error.unauthorised")) showError(mode === "create" ? fields.login : fields.password, message);
+        else if (message === t("ui.account.error.bad_recovery_key")) showError(fields.key, message);
+        else showError(null, message);
+      } finally {
+        primary.disabled = false;
+        primary.textContent = label;
+      }
+    });
+    body.appendChild(form);
+    fields.login.input.focus();
+  };
+
+  /** The recovery key, once. Continuing needs the person to say they kept it. */
+  const showKey = (key) => {
+    clear(body);
+    body.appendChild(el("h2", { className: "welcome-title", text: t("ui.account.keytitle") }));
+    body.appendChild(el("p", { className: "lede", text: t("ui.account.keytext") }));
+    const groups = el("div", { className: "recovery-key", attrs: { role: "group", "aria-label": t("ui.account.recoverykey") } });
+    for (const part of key.split("-")) groups.appendChild(el("span", { text: part }));
+    body.appendChild(groups);
+    const copy = el("button", { className: "button ghost", attrs: { type: "button" }, text: t("ui.account.copy") });
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(key);
+        copy.textContent = t("ui.account.copied");
+      } catch (error) {
+        const range = document.createRange();
+        range.selectNodeContents(groups);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    });
+    const box = el("input", { attrs: { type: "checkbox", id: "acc-kept" } });
+    const kept = el("label", { className: "account-kept", attrs: { for: "acc-kept" } }, [box, el("span", { text: t("ui.account.kept") })]);
+    const go = el("button", { className: "button play", attrs: { type: "button", disabled: "true" }, text: t("ui.account.continue"), onClick: close });
+    box.addEventListener("change", () => { go.disabled = !box.checked; });
+    body.appendChild(el("div", { className: "loading-actions" }, [copy]));
+    body.appendChild(el("div", { className: "account-confirm" }, [kept, el("div", { className: "loading-actions" }, [go])]));
+    copy.focus();
+  };
+
+  layer.hidden = false;
+  draw();
+}
+
+/** When something was last synced, in the viewer's own clock. */
+function syncedText(view) {
+  if (view.syncing) return t("ui.account.syncing");
+  if (!view.last_sync) return t("ui.account.never");
+  const when = new Date(view.last_sync * 1000);
+  return t("ui.account.synced", when.toLocaleString(STRINGS.locale, { dateStyle: "medium", timeStyle: "short" }));
+}
+
+/** The server's own list of what it keeps, as it gives it. */
+async function openTransparency(panel) {
+  let doc;
+  try {
+    doc = await ask("account_transparency");
+  } catch (error) {
+    return;
+  }
+  const lang = STRINGS.locale === "tr" ? "tr" : "en";
+  const say = (text) => (text && (text[lang] || text.en)) || "";
+  const list = el("div", { className: "keeps" }, [el("h4", { text: t("ui.account.keepstitle", doc.server || ACCOUNT.server) })]);
+  for (const item of doc.kept || []) {
+    list.appendChild(
+      el("div", { className: "keeps-item" }, [
+        el("p", { className: "keeps-what", text: say(item.what) }),
+        el("p", { className: "note", text: say(item.why) }),
+        el("p", { className: "note", text: t("ui.account.keepsfor", say(item.kept_for)) }),
+        el("p", { className: "note", text: t("ui.account.keepsreader", say(item.readable_by)) }),
+      ])
+    );
+  }
+  const plain = (title, items) => {
+    if (!items || items.length === 0) return;
+    list.appendChild(el("h4", { text: title }));
+    const ul = el("ul", { className: "keeps-list" });
+    for (const item of items) ul.appendChild(el("li", { text: say(item) }));
+    list.appendChild(ul);
+  };
+  plain(t("ui.account.keepsmemory"), doc.memory_only);
+  plain(t("ui.account.keepsnever"), doc.never);
+  const old = panel.querySelector(".keeps");
+  if (old) old.remove();
+  panel.appendChild(list);
+}
+
+/** The account's place in Settings. */
+async function accountPanel() {
+  await loadAccount();
+  const panel = el("div", { className: "card-panel account-panel", attrs: { id: "account-panel" } }, [el("h3", { text: t("ui.account.section") })]);
+  if (!ACCOUNT.username) {
+    panel.appendChild(el("p", { className: "note", text: t("ui.account.prompt") }));
+    panel.appendChild(
+      el("div", { className: "loading-actions" }, [
+        el("button", { className: "button play", attrs: { type: "button" }, text: t("ui.account.open"), onClick: () => openAccount(() => loadSettings()) }),
+      ])
+    );
+    return panel;
+  }
+  const status = el("p", { className: "note", text: syncedText(ACCOUNT) });
+  panel.appendChild(el("p", { className: "account-who", text: t("ui.account.signedin", ACCOUNT.username) }));
+  panel.appendChild(status);
+  const syncNow = el("button", { className: "button ghost", attrs: { type: "button" }, text: t("ui.account.syncnow") });
+  syncNow.addEventListener("click", async () => {
+    syncNow.disabled = true;
+    status.textContent = t("ui.account.syncing");
+    try {
+      ACCOUNT = await ask("account_sync");
+      await loadRows();
+    } finally {
+      status.textContent = syncedText(ACCOUNT);
+      syncNow.disabled = false;
+    }
+  });
+  const keeps = el("button", { className: "button ghost", attrs: { type: "button" }, text: t("ui.account.keeps"), onClick: () => openTransparency(panel) });
+  const signOut = el("button", {
+    className: "button ghost",
+    attrs: { type: "button" },
+    text: t("ui.account.signout"),
+    onClick: async () => {
+      await ask("account_logout");
+      loadSettings();
+    },
+  });
+  panel.appendChild(el("div", { className: "loading-actions" }, [syncNow, keeps, signOut]));
+
+  // E-mail, optional, for signing in with it and for a reset.
+  const emailBox = el("div", { className: "account-email" }, [el("h4", { text: t("ui.account.email") }), el("p", { className: "note", text: t("ui.account.emailtext") })]);
+  const emailState = el("p", { className: "note", attrs: { role: "status" } });
+  emailBox.appendChild(emailState);
+  try {
+    const me = await invoke("account_me");
+    if (me.email) emailState.textContent = me.email.verified ? t("ui.account.emailverified", me.email.address) : t("ui.account.emailpending", me.email.address);
+  } catch (error) {
+    // Offline: the rest of the panel still works.
+  }
+  const address = accountField("acc-email", t("ui.account.emailaddress"), { type: "email", autocomplete: "email", spellcheck: "false" });
+  const code = accountField("acc-code", t("ui.account.code"), { inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6" });
+  code.node.hidden = true;
+  const verify = el("button", { className: "button ghost", attrs: { type: "button" }, text: t("ui.account.verify") });
+  verify.hidden = true;
+  const send = el("button", { className: "button ghost", attrs: { type: "button" }, text: t("ui.account.emailsend") });
+  send.addEventListener("click", async () => {
+    const value = address.input.value.trim();
+    if (!value) return;
+    try {
+      await ask("account_email", { address: value });
+      emailState.textContent = t("ui.account.emailsent", value);
+      code.node.hidden = false;
+      verify.hidden = false;
+      code.input.focus();
+    } catch (error) {
+      // ask() has said why.
+    }
+  });
+  verify.addEventListener("click", async () => {
+    try {
+      await ask("account_email_verify", { code: code.input.value.trim() });
+      loadSettings();
+    } catch (error) {
+      code.node.querySelector(".field-error").textContent = String(error);
+    }
+  });
+  emailBox.appendChild(address.node);
+  emailBox.appendChild(el("div", { className: "loading-actions" }, [send]));
+  emailBox.appendChild(code.node);
+  emailBox.appendChild(el("div", { className: "loading-actions" }, [verify]));
+  panel.appendChild(emailBox);
+
+  // Deleting asks once more, on the page, and says what stays.
+  const sure = el("div", { className: "account-delete", attrs: { hidden: "true" } }, [
+    el("p", { className: "note", text: t("ui.account.deleteconfirm") }),
+    el("div", { className: "loading-actions" }, [
+      el("button", {
+        className: "button danger",
+        attrs: { type: "button" },
+        text: t("ui.account.delete"),
+        onClick: async () => {
+          await ask("account_delete");
+          loadSettings();
+        },
+      }),
+    ]),
+  ]);
+  const remove = el("button", {
+    className: "text-button quiet",
+    attrs: { type: "button", "aria-expanded": "false" },
+    text: t("ui.account.delete"),
+    onClick: () => {
+      sure.hidden = !sure.hidden;
+      remove.setAttribute("aria-expanded", String(!sure.hidden));
+    },
+  });
+  panel.appendChild(el("div", { className: "loading-actions" }, [remove]));
+  panel.appendChild(sure);
+  return panel;
+}
+
 // --------------------------------------------------------------- your genres
 
 /** Rows of the genres this profile scores highest: the first catalogue that
@@ -906,6 +1285,7 @@ function openAvatarMenu() {
     { icon: "user", label: t("ui.profiles.switchmenu"), run: () => openWho(false) },
     { icon: "star", label: t("ui.nav.profile"), run: () => go("profile") },
     { icon: "settings", label: t("ui.nav.settings"), run: () => go("settings") },
+    { icon: "lock", label: t("ui.account.menu"), run: () => (ACCOUNT.username ? go("settings") : openAccount(null)) },
   ];
   openMenu(document.getElementById("who-open"), items);
 }
@@ -2852,6 +3232,7 @@ async function loadSettings() {
   await loadProfiles();
   languagePanel.appendChild(row(t("ui.window.title"), windowPicker(PROFILES.window || "maximized", true)));
   form.appendChild(languagePanel);
+  form.appendChild(await accountPanel());
 
   for (const section of SETTINGS_SECTIONS) {
     const panel = el("div", { className: "card-panel" }, [el("h3", { text: t(section.title) })]);
@@ -3440,9 +3821,16 @@ async function boot() {
   if (PIN_GATE) openWho(false);
   showView("home");
   await loadRows();
-  // The first time, the setup; with several profiles, who is watching.
-  if (!PROFILES.onboarded) openWelcome();
-  else if (PROFILES.profiles.length > 1) openWho(false);
+  // The first time, the account question and then the setup; with several
+  // profiles, who is watching. Someone who already used EON Stream is asked
+  // about the account once, unless a profile lock or a choice of profile
+  // comes first.
+  await loadAccount();
+  if (!PROFILES.onboarded) {
+    if (!ACCOUNT.prompted) openAccount(() => openWelcome());
+    else openWelcome();
+  } else if (PROFILES.profiles.length > 1) openWho(false);
+  else if (!ACCOUNT.prompted && !PIN_GATE) openAccount(null);
   await poll();
   // Every second while something is starting, so the loading screen moves;
   // every few seconds otherwise, which is only there to notice a playback

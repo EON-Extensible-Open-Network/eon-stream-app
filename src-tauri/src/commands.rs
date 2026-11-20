@@ -1244,10 +1244,13 @@ pub async fn rating_set(
     score: Option<u8>,
     review: Option<String>,
 ) -> Out<Option<crate::ratings::Rating>> {
-    with_session(&state, move |session| {
+    let shared = Arc::clone(state.inner());
+    let rating = with_session(&state, move |session| {
         crate::ratings::set(session, &content_type, &id, score, review)
     })
-    .await
+    .await?;
+    crate::account::sync_soon(&shared);
+    Ok(rating)
 }
 
 /// The viewer's profile: every score, and what they add up to.
@@ -2394,4 +2397,196 @@ fn to_playback_source(stream: &eon_stream_core::Stream) -> Result<PlaybackSource
         Some(StreamSource::External(_)) => Err("ui.error.externalsource".to_owned()),
         None => Err("ui.error.nothingplayable".to_owned()),
     }
+}
+
+// -------------------------------------------------------------- EON Account
+
+/// An account error as a sentence in the viewer's language.
+fn account_error(
+    session_text: &dyn Fn(&str) -> String,
+    error: &eon_account_client::Error,
+) -> String {
+    let key = format!("ui.account.error.{}", error.code());
+    let text = session_text(&key);
+    if text == key {
+        session_text("ui.account.error.other")
+    } else {
+        text
+    }
+}
+
+/// Runs `work` on the current profile's account without the session lock,
+/// which is held only to read the profile and the catalogue.
+async fn with_account<T, F>(state: &State<'_, Shared>, work: F) -> Out<T>
+where
+    F: FnOnce(&eon_account_client::Account, &Shared) -> Result<T, eon_account_client::Error>
+        + Send
+        + 'static,
+    T: Send + 'static,
+{
+    let shared = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let profile = shared
+            .lock()
+            .map_err(|_| "the host lost track of its own state".to_owned())?
+            .profiles
+            .current
+            .clone();
+        let account = eon_account_client::Account::open(&crate::account::dir(&profile));
+        work(&account, &shared).map_err(|e| {
+            shared.lock().map_or_else(
+                |_| e.to_string(),
+                |session| account_error(&|k| session.text(k), &e),
+            )
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn account_view(shared: &Shared) -> crate::account::AccountView {
+    let profile = shared
+        .lock()
+        .map(|s| s.profiles.current.clone())
+        .unwrap_or_default();
+    crate::account::view(&profile)
+}
+
+/// Who is signed in on this profile, and to which server. Never a token.
+#[tauri::command]
+pub async fn account_state(state: State<'_, Shared>) -> Out<crate::account::AccountView> {
+    with_account(&state, |_, shared| Ok(account_view(shared))).await
+}
+
+/// Sets the account server's address, or clears it with an empty one.
+#[tauri::command]
+pub async fn account_server(
+    state: State<'_, Shared>,
+    address: String,
+) -> Out<crate::account::AccountView> {
+    with_account(&state, move |account, shared| {
+        account.set_server(Some(&address))?;
+        Ok(account_view(shared))
+    })
+    .await
+}
+
+/// Creates an account. Answers the recovery key, once; it is kept nowhere.
+#[tauri::command]
+pub async fn account_register(
+    state: State<'_, Shared>,
+    username: String,
+    password: String,
+) -> Out<String> {
+    with_account(&state, move |account, shared| {
+        let key = account.register(&username, &password, &crate::account::device_name())?;
+        crate::account::sync_soon(shared);
+        Ok(key.display())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn account_login(
+    state: State<'_, Shared>,
+    login: String,
+    password: String,
+) -> Out<crate::account::AccountView> {
+    with_account(&state, move |account, shared| {
+        account.login(&login, &password, &crate::account::device_name())?;
+        crate::account::sync(shared)?;
+        Ok(account_view(shared))
+    })
+    .await
+}
+
+/// A new password with the recovery key; progress and scores are kept.
+#[tauri::command]
+pub async fn account_recover(
+    state: State<'_, Shared>,
+    username: String,
+    key: String,
+    password: String,
+) -> Out<crate::account::AccountView> {
+    with_account(&state, move |account, shared| {
+        account.recover_with_key(&username, &key, &password, &crate::account::device_name())?;
+        crate::account::sync(shared)?;
+        Ok(account_view(shared))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn account_logout(state: State<'_, Shared>) -> Out<crate::account::AccountView> {
+    with_account(&state, |account, shared| {
+        account.logout()?;
+        Ok(account_view(shared))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn account_sync(state: State<'_, Shared>) -> Out<crate::account::AccountView> {
+    with_account(&state, |_, shared| {
+        crate::account::sync(shared)?;
+        Ok(account_view(shared))
+    })
+    .await
+}
+
+/// The welcome asked this profile once; it does not ask again by itself.
+#[tauri::command]
+pub async fn account_prompted(state: State<'_, Shared>) -> Out<crate::account::AccountView> {
+    with_account(&state, |_, shared| {
+        let profile = shared
+            .lock()
+            .map(|s| s.profiles.current.clone())
+            .unwrap_or_default();
+        let mut sync = crate::account::SyncState::load(&profile);
+        sync.prompted = true;
+        sync.save(&profile);
+        Ok(account_view(shared))
+    })
+    .await
+}
+
+/// The server's own list of what it keeps.
+#[tauri::command]
+pub async fn account_transparency(state: State<'_, Shared>) -> Out<serde_json::Value> {
+    with_account(&state, |account, _| account.transparency()).await
+}
+
+/// Adds an e-mail address; a code goes to it.
+#[tauri::command]
+pub async fn account_email(state: State<'_, Shared>, address: String) -> Out<()> {
+    with_account(&state, move |account, _| account.set_email(&address)).await
+}
+
+#[tauri::command]
+pub async fn account_email_verify(state: State<'_, Shared>, code: String) -> Out<()> {
+    with_account(&state, move |account, _| account.verify_email(&code)).await
+}
+
+/// What the account holds besides the vault: the e-mail address, if any.
+#[tauri::command]
+pub async fn account_me(state: State<'_, Shared>) -> Out<serde_json::Value> {
+    with_account(&state, |account, _| {
+        let me = account.me()?;
+        Ok(serde_json::json!({
+            "username": me.username,
+            "email": me.email.map(|c| serde_json::json!({"address": c.value, "verified": c.verified})),
+        }))
+    })
+    .await
+}
+
+/// Deletes the account on the server. This profile's own progress and scores
+/// stay on this computer.
+#[tauri::command]
+pub async fn account_delete(state: State<'_, Shared>) -> Out<crate::account::AccountView> {
+    with_account(&state, |account, shared| {
+        account.delete_account()?;
+        Ok(account_view(shared))
+    })
+    .await
 }

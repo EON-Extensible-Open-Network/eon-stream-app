@@ -15,6 +15,50 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.31] — 2026-11-20 — one account, and progress that follows you
+
+The thirty-first alpha. EON Stream can now sign in to **EON Account**, the one account
+for all of EON (plan madde 46). Being a guest is still a full answer (madde 7).
+
+### Added
+- **First start asks once.** Before the usual setup, the program offers three choices:
+  sign in, create an account, or continue as a guest. A guest's everything stays on this
+  computer, as before. Someone who already used EON Stream is asked once too, unless a
+  profile lock or the profile picker comes first. The question never comes back by
+  itself; the profile menu has an **EON Account** entry.
+- **A username and a password are enough.** E-mail is optional and can be added in
+  Settings. The password never leaves this computer, not even as a hash: sign-in is
+  OPAQUE (RFC 9807), through
+  [eon-account-client](https://github.com/EON-Extensible-Open-Network/eon-account-client).
+- **The recovery key is shown once.** It appears at sign-up, in eight groups of four,
+  with a copy button. Continuing waits until the person says they kept it. It is the only
+  way back to their progress and scores if the password is forgotten, and **Forgot your
+  password?** takes it.
+- **Progress and scores follow the profile.** A signed-in profile's watch progress and
+  scores are copied into the account's vault, sealed on this computer first, so the
+  server stores boxes it cannot open.
+  - Sync runs at start, at sign-in, after a score changes, every three minutes, and on
+    **Sync now**.
+  - Two computers merge entry by entry, and the newer one wins.
+  - A removal on one computer reaches the others.
+  - The profile's own files stay where they were; the vault is a copy.
+- **"What the server keeps"** in Settings shows the account server's own list, read from
+  the server the viewer actually uses (`/v0/transparency`). The list covers every kind of
+  data, why it is kept, for how long and who can read it, in English and Turkish.
+- **Settings → EON Account** shows who is signed in and when the last sync ran. It offers
+  sign-out, an optional e-mail address with a verification code, and deletion. Deleting
+  asks once more on the page, and the profile's own progress and scores stay on this
+  computer.
+- `tools/account-check.mjs` drives all of this in the real window against a real account
+  server, in English and Turkish.
+
+### Not yet
+- **No account server is run by the project** (madde 30): the address starts empty and
+  the sheet says so.
+- **The community still uses its own sign-in.** Moving it to EON Account assertions is the
+  next step.
+- **Reset by e-mail exists in the account API but not yet in this window.**
+
 ## [v0.3] — 2026-11-18 — everyone on the computer, and a database of their own
 
 The thirtieth alpha, and the largest step since the window arrived. It was published once

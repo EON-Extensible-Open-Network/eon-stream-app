@@ -55,6 +55,7 @@ What the current build does:
 | **Settings** | persisted, typed, and auditably free of anything that reports anywhere |
 | **Updates** | signed release manifests, downgrades refused, revocation applied |
 | **Language** | Turkish and English, in the window and at the prompt |
+| **EON Account** | sign in, create an account or stay a guest; a signed-in profile's progress and scores follow it, sealed on this computer first (madde 46) |
 
 Against the eight items of the v1 definition-of-done: 2, 3, 4, 5, 6, 7 and 8 are done; 1 is
 done apart from packaging and signing. What is left between here and `v1` is **the
@@ -131,6 +132,11 @@ dependency tree to audit (madde 37) and no build that only works on a machine wi
 everything behind the window that a machine can check — both message catalogues, the
 interface's strings, the empty trust set, the settings audit, and that no addon address
 appears in anything the interface is handed.
+
+`node tools/account-check.mjs <debug eon-stream.exe> <eon-account-server.exe> <dir>` drives
+the account flow in the real window against a real
+[account server](https://github.com/EON-Extensible-Open-Network/eon-account-server) and
+saves screenshots.
 
 System requirements: WebView2 (present on Windows 11) and mpv for playback.
 

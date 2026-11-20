@@ -43,6 +43,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![forbid(unsafe_code)]
 
+mod account;
 mod art;
 mod buffer;
 mod commands;
@@ -125,6 +126,10 @@ fn window(play: Option<String>) {
         });
     }
 
+    // A signed-in profile's progress and scores follow it (madde 46). With no
+    // account server set, this does nothing and sends nothing.
+    account::keep_in_sync(&session);
+
     // Downloads that were not finished when the program last closed carry on.
     {
         let shared = Arc::clone(&session);
@@ -177,6 +182,19 @@ fn window(play: Option<String>) {
             commands::downloads,
             commands::download_play,
             commands::download_remove,
+            commands::account_state,
+            commands::account_server,
+            commands::account_register,
+            commands::account_login,
+            commands::account_recover,
+            commands::account_logout,
+            commands::account_sync,
+            commands::account_prompted,
+            commands::account_transparency,
+            commands::account_email,
+            commands::account_email_verify,
+            commands::account_me,
+            commands::account_delete,
             commands::community_state,
             commands::community_server,
             commands::community_request,

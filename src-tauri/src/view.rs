@@ -1545,6 +1545,8 @@ pub fn about(session: &Session) -> AboutView {
             "eon-profiles/",
             "eon-art.json",
             "eon-pins.json",
+            "eon-account/",
+            "eon-account-sync.json",
             "eon-webview/",
         ]
         .iter()
