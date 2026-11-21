@@ -30,7 +30,7 @@ tauri = { version = "2", features = ["unstable"] }
 # the other side of this line (madde 32c).
 eon-stream-core = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-core", rev = "b78cb206230c00f8b9c519b8b65aad9f2671bdc0" }
 # Torrents, the loopback server, and mpv over JSON IPC.
-eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "2c8c7ba90474cea6818e34e1760ba69d18a2062f" }
+eon-stream-engine = { git = "https://github.com/EON-Extensible-Open-Network/eon-stream-engine", rev = "e407fb35365fd8a3469046de4ac282e00d44f835" }
 # The IPC surface is typed on both sides; these serialise it. Already in the
 # tree through tauri.
 serde = { version = "1", features = ["derive"] }

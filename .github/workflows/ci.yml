@@ -82,21 +82,33 @@ jobs:
           cat /tmp/selftest.txt
           grep -q '^ok$' /tmp/selftest.txt
 
-  linux:
-    name: fmt · clippy · build (linux, headless build only)
-    runs-on: ubuntu-latest
+  unix:
+    name: clippy · test · selftest (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux and macOS are released since v0.33 (plan madde 2, v0.14), so
+        # both binaries are built and checked here, not only the headless one.
+        os: [ubuntu-22.04, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      - name: The window's system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev             libjavascriptcoregtk-4.1-dev pkg-config build-essential
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      # Only `eon-stream-cli` here. The window is a Tauri host, and building it
-      # on Linux means webkit2gtk, libsoup and gtk development packages on the
-      # runner -- a system dependency chain for a platform this project does
-      # not release yet. It gets added with the Linux release, not before, so
-      # that when it is added it is because someone is about to ship it.
-      - run: cargo clippy --all-targets --locked -p eon-stream-cli
-      - run: cargo build --release --locked -p eon-stream-cli
+      - run: cargo clippy --all-targets --locked
+      - run: cargo test --locked
+      - name: The window's host must answer for itself, without a window
+        run: |
+          cargo build --release --locked
+          target/release/eon-stream --selftest /tmp/selftest.txt
+          cat /tmp/selftest.txt
+          grep -q '^ok$' /tmp/selftest.txt
 
   meta:
     name: docs · licences

@@ -60,8 +60,14 @@ pub const PLAYER_CACHE: &str = "--demuxer-max-bytes=150MiB";
 pub const PLAYER_BACK_CACHE: &str = "--demuxer-max-back-bytes=50MiB";
 /// The forward cache in bytes, with room to spare.
 const PLAYER_CACHE_BYTES: u64 = 200 * MIB;
-/// Left free on the disk whatever the limit says.
+/// Left free on the disk whatever the limit says: a tenth of what the disk
+/// has for us, between 256 MiB and 2 GiB. A flat 2 GiB left nothing to play
+/// with on a television with three gigabytes free (madde 2, plan v0.14).
 const RESERVE: u64 = 2 * GIB;
+const RESERVE_MIN: u64 = 256 * MIB;
+/// The least the cache can work in: mpv's forward cache, the head of the
+/// file, and half a minute behind the playhead at a high bitrate.
+const SMALLEST: u64 = 512 * MIB;
 const HIGH: f64 = 0.8;
 const LOW: f64 = 0.6;
 
@@ -111,14 +117,17 @@ pub fn budget(setting_mb: u32, free: Option<u64>, usage: u64) -> (u64, bool) {
     if let Some((limit, _, _)) = test_tuning() {
         return (limit, false);
     }
-    let room = free.map(|free| (free + usage).saturating_sub(RESERVE));
+    let room = free.map(|free| {
+        let ours = free + usage;
+        ours.saturating_sub((ours / 10).clamp(RESERVE_MIN, RESERVE))
+    });
     let wanted = if setting_mb == 0 {
         room.map_or(10 * GIB, |room| (room / 4).clamp(4 * GIB, 50 * GIB))
     } else {
         u64::from(setting_mb) * MIB
     };
     match room {
-        Some(room) if wanted > room => (room.max(GIB), setting_mb != 0),
+        Some(room) if wanted > room => (room.max(SMALLEST), setting_mb != 0),
         _ => (wanted, false),
     }
 }
@@ -459,6 +468,17 @@ mod tests {
         assert_eq!(budget(0, Some(102 * GIB), 0), (25 * GIB, false));
         assert_eq!(budget(0, Some(1000 * GIB), 0), (50 * GIB, false));
         assert_eq!(budget(0, None, 0), (10 * GIB, false));
+    }
+
+    #[test]
+    fn a_small_disk_still_has_room_to_play() {
+        // A television with 3 GB free: a tenth is kept back, not two gigabytes.
+        let (limit, _) = budget(0, Some(3 * GIB), 0);
+        assert_eq!(limit, 3 * GIB - 3 * GIB / 10);
+        // 1 GB free: 256 MiB kept back, the rest is the cache.
+        assert_eq!(budget(0, Some(GIB), 0).0, GIB - 256 * MIB);
+        // Nearly full: the smallest cache that can still play, not a gigabyte.
+        assert_eq!(budget(0, Some(300 * MIB), 0).0, 512 * MIB);
     }
 
     #[test]

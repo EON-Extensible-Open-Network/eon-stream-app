@@ -55,8 +55,8 @@ today is nothing. There is no flag that skips verification.
 - **The window does not do everything the prompt does.** Modules, the update
   check, subtitle search by hand, track selection and `eon://` deep links are
   in `eon-stream-cli` only.
-- **Playing inside the window is Windows-only so far.** mpv draws into the
-  EON Stream window there; it has not been checked anywhere else yet.
+- **Playing inside the window is Windows-only so far.** On Linux and macOS
+  mpv opens a window of its own with its own controls.
 - **YouTube sources** are handed to mpv's `ytdl` hook, so they need `yt-dlp`
   installed; without it they will not open.
 - **BitTorrent v2** magnet links (`btmh`) are refused by name. This build reads
@@ -64,16 +64,37 @@ today is nothing. There is no flag that skips verification.
 - **Private trackers** are not supported: a passkey in a tracker URL is a
   credential and handling it properly is its own piece of work.
 
+### Which file
+
+| Your computer | Download |
+|---|---|
+| Windows (most PCs) | `…-windows-x86_64.exe` |
+| Windows on ARM (Snapdragon laptops) | `…-windows-aarch64.exe` |
+| Linux | `…-linux-x86_64`, or `…-linux-aarch64` on ARM |
+| Mac with Apple Silicon (M1 and later) | `…-macos-aarch64` |
+| Mac with Intel | `…-macos-x86_64` |
+
+On Linux and macOS, make the file runnable first: `chmod +x eon-stream-*`. On macOS,
+also remove the quarantine flag: `xattr -d com.apple.quarantine eon-stream-*`. Linux
+needs `webkit2gtk-4.1`, which is already installed on Ubuntu 22.04+, Debian 12+ and
+Fedora 36+.
+
+Keep the files in a folder you own: EON Stream writes everything beside itself.
+
 ### You need mpv
 
-Playback is mpv, running as its own process and drawing inside the EON Stream
-window, driven over JSON IPC. Install it:
+Playback is mpv, running as its own process and driven over JSON IPC. On Windows it
+draws inside the EON Stream window; on Linux and macOS it opens its own window. Install
+it:
 
-```powershell
-winget install shinchiro.mpv
+```
+winget install shinchiro.mpv        # Windows
+sudo apt install mpv                # Debian, Ubuntu
+sudo dnf install mpv                # Fedora
+brew install mpv                    # macOS
 ```
 
-If it is somewhere unusual, set `EON_MPV_PATH` to the full path of `mpv.exe`.
+If it is somewhere unusual, set `EON_MPV_PATH` to the full path of the mpv executable.
 
 ### Try it
 

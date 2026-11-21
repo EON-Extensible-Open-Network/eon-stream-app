@@ -15,6 +15,36 @@ and the headless build still ships beside it.
 
 ## [Unreleased]
 
+## [v0.33] — 2026-11-21 — every desktop platform
+
+### Added
+- **EON Stream on every desktop platform.** Each release now carries Windows, Linux and
+  macOS builds, for x86_64 and ARM64:
+  - Windows on ARM;
+  - Linux on x86_64 and ARM64 (Ubuntu 22.04+, Debian 12+, Fedora 36+; it needs
+    `webkit2gtk-4.1` and mpv);
+  - macOS on Apple Silicon and Intel.
+
+  Each is built and self-tested on a machine of its own architecture before it is
+  published, and one `SHA256SUMS.txt` covers them all (plan madde 2, v0.14).
+- **The cache gives the watched part back on Linux and macOS too.** Before, only Windows
+  did. It uses `fallocate` punch-hole on Linux and Android, `F_PUNCHHOLE` on macOS, and
+  `statvfs` for the room left on the disk. Elsewhere the torrent cache could only grow.
+
+### Changed
+- **On a small disk, less is held back.** The cache leaves a tenth of the disk free,
+  between 256 MiB and 2 GiB, instead of a flat 2 GiB. It can work in 512 MiB instead of
+  needing 1 GiB. A device with three gigabytes free can now play a film to the end.
+
+### Known
+- **On Linux and macOS, mpv opens a window of its own**, with its own controls. Putting
+  the picture inside the EON Stream window has only been verified on Windows. Elsewhere
+  the catalogue stays where it is, instead of a transparent layer being drawn over
+  nothing.
+- **The Linux and macOS builds are plain, unsigned executables.** Keep them in a folder
+  you own, because everything is written beside the executable. On macOS, remove the
+  quarantine flag first: `xattr -d com.apple.quarantine eon-stream-*`.
+
 ## [v0.32] — 2026-11-20 — the community with EON Account
 
 ### Added
