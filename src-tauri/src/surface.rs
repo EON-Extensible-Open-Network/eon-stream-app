@@ -242,6 +242,12 @@ pub fn open_controls() {
     let Some(window) = app.get_window(MAIN) else {
         return;
     };
+    // Where the picture could not be put in this window (Linux, macOS), mpv
+    // has a window of its own with its own controls. Laying ours over this
+    // one would hide the catalogue behind a transparent layer over nothing.
+    if native(&window).is_none() {
+        return;
+    }
     if let Some(existing) = app.get_webview(CONTROLS) {
         let _ = existing.close();
     }
